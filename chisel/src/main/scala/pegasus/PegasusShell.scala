@@ -59,59 +59,59 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
 
   setInline("PegasusShell.v",
     """module PegasusShell(
-      |  input         io_pcie_sys_clk,
-      |  input         io_pcie_sys_clk_gt,
-      |  input         io_pcie_sys_rst_n,
-      |  output [15:0] io_pcie_exp_txp,
-      |  output [15:0] io_pcie_exp_txn,
-      |  input  [15:0] io_pcie_exp_rxp,
-      |  input  [15:0] io_pcie_exp_rxn,
-      |  input         io_hbm_ref_clk,
-      |  input         io_uart_tx,
-      |  input  [5:0]  io_chip_mem_awid,
-      |  input  [32:0] io_chip_mem_awaddr,
-      |  input  [7:0]  io_chip_mem_awlen,
-      |  input  [2:0]  io_chip_mem_awsize,
-      |  input  [1:0]  io_chip_mem_awburst,
-      |  input         io_chip_mem_awvalid,
-      |  output        io_chip_mem_awready,
-      |  input  [255:0] io_chip_mem_wdata,
-      |  input  [31:0] io_chip_mem_wstrb,
-      |  input         io_chip_mem_wlast,
-      |  input         io_chip_mem_wvalid,
-      |  output        io_chip_mem_wready,
-      |  output [5:0]  io_chip_mem_bid,
-      |  output [1:0]  io_chip_mem_bresp,
-      |  output        io_chip_mem_bvalid,
-      |  input         io_chip_mem_bready,
-      |  input  [5:0]  io_chip_mem_arid,
-      |  input  [32:0] io_chip_mem_araddr,
-      |  input  [7:0]  io_chip_mem_arlen,
-      |  input  [2:0]  io_chip_mem_arsize,
-      |  input  [1:0]  io_chip_mem_arburst,
-      |  input         io_chip_mem_arvalid,
-      |  output        io_chip_mem_arready,
-      |  output [5:0]  io_chip_mem_rid,
-      |  output [255:0] io_chip_mem_rdata,
-      |  output [1:0]  io_chip_mem_rresp,
-      |  output        io_chip_mem_rlast,
-      |  output        io_chip_mem_rvalid,
-      |  input         io_chip_mem_rready,
-      |  output        io_dut_clk,
-      |  output        io_dut_reset
+      |  input         pcie_sys_clk,
+      |  input         pcie_sys_clk_gt,
+      |  input         pcie_sys_rst_n,
+      |  output [15:0] pcie_exp_txp,
+      |  output [15:0] pcie_exp_txn,
+      |  input  [15:0] pcie_exp_rxp,
+      |  input  [15:0] pcie_exp_rxn,
+      |  input         hbm_ref_clk,
+      |  input         uart_tx,
+      |  input  [5:0]  chip_mem_awid,
+      |  input  [32:0] chip_mem_awaddr,
+      |  input  [7:0]  chip_mem_awlen,
+      |  input  [2:0]  chip_mem_awsize,
+      |  input  [1:0]  chip_mem_awburst,
+      |  input         chip_mem_awvalid,
+      |  output        chip_mem_awready,
+      |  input  [255:0] chip_mem_wdata,
+      |  input  [31:0] chip_mem_wstrb,
+      |  input         chip_mem_wlast,
+      |  input         chip_mem_wvalid,
+      |  output        chip_mem_wready,
+      |  output [5:0]  chip_mem_bid,
+      |  output [1:0]  chip_mem_bresp,
+      |  output        chip_mem_bvalid,
+      |  input         chip_mem_bready,
+      |  input  [5:0]  chip_mem_arid,
+      |  input  [32:0] chip_mem_araddr,
+      |  input  [7:0]  chip_mem_arlen,
+      |  input  [2:0]  chip_mem_arsize,
+      |  input  [1:0]  chip_mem_arburst,
+      |  input         chip_mem_arvalid,
+      |  output        chip_mem_arready,
+      |  output [5:0]  chip_mem_rid,
+      |  output [255:0] chip_mem_rdata,
+      |  output [1:0]  chip_mem_rresp,
+      |  output        chip_mem_rlast,
+      |  output        chip_mem_rvalid,
+      |  input         chip_mem_rready,
+      |  output        dut_clk,
+      |  output        dut_reset
       |);
       |
       |  wire _xdma_axi_aresetn;
       |
       |  xdma_0 xdma (
-      |    .sys_clk           (io_pcie_sys_clk),
-      |    .sys_clk_gt        (io_pcie_sys_clk_gt),
-      |    .sys_rst_n         (io_pcie_sys_rst_n),
-      |    .pci_exp_txp       (io_pcie_exp_txp),
-      |    .pci_exp_txn       (io_pcie_exp_txn),
-      |    .pci_exp_rxp       (io_pcie_exp_rxp),
-      |    .pci_exp_rxn       (io_pcie_exp_rxn),
-      |    .axi_aclk          (io_dut_clk),
+      |    .sys_clk           (pcie_sys_clk),
+      |    .sys_clk_gt        (pcie_sys_clk_gt),
+      |    .sys_rst_n         (pcie_sys_rst_n),
+      |    .pci_exp_txp       (pcie_exp_txp),
+      |    .pci_exp_txn       (pcie_exp_txn),
+      |    .pci_exp_rxp       (pcie_exp_rxp),
+      |    .pci_exp_rxn       (pcie_exp_rxn),
+      |    .axi_aclk          (dut_clk),
       |    .axi_aresetn       (_xdma_axi_aresetn),
       |    .usr_irq_req       (1'b0),
       |    .m_axib_awready    (1'b0),
@@ -158,18 +158,18 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |    .s_axib_rready     (1'b0)
       |  );
       |
-      |  assign io_dut_reset      = ~_xdma_axi_aresetn;
-      |  assign io_chip_mem_awready = 1'b0;
-      |  assign io_chip_mem_wready  = 1'b0;
-      |  assign io_chip_mem_bid     = 6'h0;
-      |  assign io_chip_mem_bresp   = 2'h0;
-      |  assign io_chip_mem_bvalid  = 1'b0;
-      |  assign io_chip_mem_arready = 1'b0;
-      |  assign io_chip_mem_rid     = 6'h0;
-      |  assign io_chip_mem_rdata   = 256'h0;
-      |  assign io_chip_mem_rresp   = 2'h0;
-      |  assign io_chip_mem_rlast   = 1'b0;
-      |  assign io_chip_mem_rvalid  = 1'b0;
+      |  assign dut_reset      = ~_xdma_axi_aresetn;
+      |  assign chip_mem_awready = 1'b0;
+      |  assign chip_mem_wready  = 1'b0;
+      |  assign chip_mem_bid     = 6'h0;
+      |  assign chip_mem_bresp   = 2'h0;
+      |  assign chip_mem_bvalid  = 1'b0;
+      |  assign chip_mem_arready = 1'b0;
+      |  assign chip_mem_rid     = 6'h0;
+      |  assign chip_mem_rdata   = 256'h0;
+      |  assign chip_mem_rresp   = 2'h0;
+      |  assign chip_mem_rlast   = 1'b0;
+      |  assign chip_mem_rvalid  = 1'b0;
       |
       |endmodule
       |""".stripMargin)

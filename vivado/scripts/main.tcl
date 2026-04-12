@@ -46,9 +46,9 @@ set rtl_files_raw [concat $sv_files $v_files]
 set rtl_files {}
 foreach f $rtl_files_raw {
   set fname [file tail $f]
-  # Skip simulation-only files: DPI modules, clock source helpers, and generic IO cells
-  if {[regexp {DPI|ClockSource|EICG_wrapper|GenericDigital} $fname]} {
-    puts "INFO: skip simulation-only file $f"
+  # Skip: DPI stubs, ClockSource, and Chipyard harness layers not needed with PegasusTop
+  if {[regexp {DPI|ClockSource|PegasusHarness|ChipTop} $fname]} {
+    puts "INFO: skip sim/harness file $f"
   } else {
     lappend rtl_files $f
   }
@@ -59,16 +59,23 @@ if {[llength $rtl_files] == 0} {
   exit 1
 }
 
+# Add FPGA-safe replacements for simulation primitives
+foreach stub_file [glob -nocomplain -directory "${SCRIPT_DIR}/rtl" *.sv *.v] {
+  lappend rtl_files $stub_file
+  puts "INFO: added FPGA stub: [file tail $stub_file]"
+}
+
 add_files -norecurse $rtl_files
-if {[llength $sv_files] > 0} {
-  set sv_files_filtered {}
-  foreach f $sv_files {
-    set fname [file tail $f]
-    if {![regexp {DPI|ClockSource|EICG_wrapper|GenericDigital} $fname]} { lappend sv_files_filtered $f }
-  }
-  if {[llength $sv_files_filtered] > 0} {
-    set_property file_type SystemVerilog [get_files $sv_files_filtered]
-  }
+set sv_files_filtered {}
+foreach f $sv_files {
+  set fname [file tail $f]
+  if {![regexp {DPI|ClockSource|PegasusHarness|ChipTop} $fname]} { lappend sv_files_filtered $f }
+}
+foreach f [glob -nocomplain -directory "${SCRIPT_DIR}/rtl" *.sv] {
+  lappend sv_files_filtered $f
+}
+if {[llength $sv_files_filtered] > 0} {
+  set_property file_type SystemVerilog [get_files $sv_files_filtered]
 }
 update_compile_order -fileset sources_1
 

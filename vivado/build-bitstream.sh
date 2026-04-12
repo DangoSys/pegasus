@@ -3,7 +3,7 @@ set -euo pipefail
 
 SOURCE_DIR=""
 OUTPUT_DIR=""
-TOP="PegasusHarness"
+TOP="PegasusTop"
 PART="xcu280-fsvh2892-2L-e"
 
 while [[ $# -gt 0 ]]; do
