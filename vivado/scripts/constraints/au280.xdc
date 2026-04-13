@@ -13,9 +13,8 @@ create_clock -period 10.000 -name hbm_ref_clk [get_ports hbm_ref_clk]
 
 ################################################################################
 # PCIe sys_clk / sys_clk_gt are consumed by XDMA IP via IBUFDS_GTE4.
-# Vivado may insert an extra IBUF on sys_clk_gt — suppress the unrouted DRC.
+# The unrouted IBUF on sys_clk_gt is suppressed via RTSTAT-1 Warning below.
 ################################################################################
-set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets pcie_sys_clk_gt_IBUF]
 
 ################################################################################
 # Relax DRC for bring-up

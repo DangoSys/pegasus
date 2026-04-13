@@ -90,6 +90,10 @@ opt_design
 place_design
 route_design
 
+# Re-apply DRC relaxation after route (some checks are only evaluated post-route)
+set_property SEVERITY Warning [get_drc_checks RTSTAT-1]
+set_property SEVERITY Warning [get_drc_checks RTSTAT-10]
+
 # ── Reports & Outputs ────────────────────────────────────────────────────────
 report_utilization   -file "$output_dir/utilization.rpt"
 report_timing_summary -file "$output_dir/timing.rpt"

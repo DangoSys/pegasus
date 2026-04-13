@@ -103,9 +103,22 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |
       |  wire _xdma_axi_aresetn;
       |
+      |  wire pcie_sys_clk_gt_buf;
+      |
+      |  // Buffer pcie_sys_clk_gt through IBUFDS_GTE4 (required for GTY ref clocks).
+      |  // Without this, Vivado inserts a plain IBUF whose output has no fanout (RTSTAT-1).
+      |  IBUFDS_GTE4 #(.REFCLK_EN_TX_PATH(1'b0), .REFCLK_HROW_CK_SEL(2'b00), .REFCLK_ICNTL_RX(2'b00))
+      |  ibufds_gt_clk (
+      |    .I    (pcie_sys_clk_gt),
+      |    .IB   (1'b0),
+      |    .CEB  (1'b0),
+      |    .O    (pcie_sys_clk_gt_buf),
+      |    .ODIV2()
+      |  );
+      |
       |  xdma_0 xdma (
       |    .sys_clk           (pcie_sys_clk),
-      |    .sys_clk_gt        (pcie_sys_clk_gt),
+      |    .sys_clk_gt        (pcie_sys_clk_gt_buf),
       |    .sys_rst_n         (pcie_sys_rst_n),
       |    .pci_exp_txp       (pcie_exp_txp),
       |    .pci_exp_txn       (pcie_exp_txn),
