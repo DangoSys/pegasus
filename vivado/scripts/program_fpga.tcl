@@ -13,6 +13,7 @@ array set options {
   -serial         ""
   -bitstream_path ""
   -probes_path    ""
+  -hw_server      "localhost:3121"
 }
 
 for {set i 0} {$i < $argc} {incr i 2} {
@@ -29,6 +30,7 @@ for {set i 0} {$i < $argc} {incr i 2} {
 set serial         $options(-serial)
 set bitstream_path $options(-bitstream_path)
 set probes_path    $options(-probes_path)
+set hw_server_url  $options(-hw_server)
 
 if {$bitstream_path eq ""} {
   puts "ERROR: -bitstream_path is required"
@@ -39,14 +41,23 @@ if {![file exists $bitstream_path]} {
   exit 1
 }
 
-puts "INFO: bitstream = $bitstream_path"
-puts "INFO: serial    = $serial"
+puts "INFO: bitstream  = $bitstream_path"
+puts "INFO: serial     = $serial"
+puts "INFO: hw_server  = $hw_server_url"
 
 # Suppress hw_server console-server warnings on some setups
 set_param labtools.enable_cs_server false
 
 open_hw_manager
-connect_hw_server -allow_non_jtag
+# connect_hw_server always tries to launch a local hw_server first; the launch
+# may fail (e.g. Nix environment), but the connection to the already-running
+# server still succeeds.  Wrap in catch so a launch failure doesn't abort.
+catch { connect_hw_server -url $hw_server_url }
+# Verify we actually got targets; if not, the connection itself failed.
+if {[llength [get_hw_targets]] == 0} {
+  puts "ERROR: connect_hw_server failed — no hw_targets on $hw_server_url"
+  exit 1
+}
 
 # Close the default hw_target that Vivado opens automatically
 catch { close_hw_target }
@@ -54,10 +65,6 @@ catch { close_hw_target }
 # Find the hw_target whose URL contains the requested serial substring.
 # If serial is empty, pick the first available target.
 set hw_targets [get_hw_targets]
-if {[llength $hw_targets] == 0} {
-  puts "ERROR: no hw_targets found — is hw_server running?"
-  exit 1
-}
 
 set chosen ""
 if {$serial eq ""} {
