@@ -1,2 +1,4 @@
 build/
 vivado/generated/
+*.jou
+*.log

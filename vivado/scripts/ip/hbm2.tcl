@@ -1,4 +1,7 @@
-# HBM2 IP — Stack 0, MC0, 4GB, Vivado 2021.1 / hbm v1.0
+# HBM2 IP — Stack 0, MC0 only, 4GB, Vivado 2021.1 / hbm v1.0
+# MC_ENABLE_00 activates AXI ports AXI_00 and AXI_01.
+#   AXI_00: XDMA H2C DMA (host → HBM2)
+#   AXI_01: SoC mem_axi4 (DigitalTop → HBM2)
 # Must be sourced from main.tcl after $proj_dir is set.
 if {![info exists proj_dir]} {
   error "proj_dir must be set before sourcing hbm2.tcl"
@@ -23,7 +26,7 @@ set_property -dict [list \
   CONFIG.USER_MC_ENABLE_05        {FALSE} \
   CONFIG.USER_MC_ENABLE_06        {FALSE} \
   CONFIG.USER_MC_ENABLE_07        {FALSE} \
-  CONFIG.USER_CLK_SEL_LIST0       {AXI_01_ACLK} \
+  CONFIG.USER_CLK_SEL_LIST0       {AXI_00_ACLK} \
 ] [get_ips hbm_0]
 
 generate_target all [get_ips hbm_0]
