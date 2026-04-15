@@ -18,14 +18,17 @@ set proj_dir [file normalize "$output_dir/project"]
 file mkdir $proj_dir
 
 create_project pegasus_build $proj_dir -part $part_name -force
+set_property board_part xilinx.com:au280:part0:1.1 [current_project]
 set_property target_language Verilog [current_project]
 set_param general.maxThreads 32
 
 # ── IP Generation ────────────────────────────────────────────────────────────
 set SCRIPT_DIR [file normalize [file dirname [info script]]]
 source "${SCRIPT_DIR}/ip/xdma.tcl"
-source "${SCRIPT_DIR}/ip/hbm2.tcl"
+source "${SCRIPT_DIR}/ip/ddr4.tcl"
 source "${SCRIPT_DIR}/ip/dwidth_h2c.tcl"
+source "${SCRIPT_DIR}/ip/axi_clkconv.tcl"
+source "${SCRIPT_DIR}/ip/axi_ic.tcl"
 
 # Add IP XCI files so Vivado tracks them for OOC synthesis
 set xci_files [glob -nocomplain -directory [file normalize "$proj_dir/ip"] -type f */*.xci]
@@ -87,19 +90,13 @@ read_xdc "${SCRIPT_DIR}/constraints/au280.xdc"
 synth_design -top $top_name -part $part_name
 write_checkpoint -force "$output_dir/post_synth.dcp"
 
-# Connect dbg_hub/clk before opt_design to avoid Chipscope 16-213.
-# Vivado auto-inserts dbg_hub from HBM2 IP debug nets; its clk must be driven.
-# Find the AXI clock net by reading the clock pin of a FF in the dwidth_h2c IP
-# (which runs on axi_aclk). This avoids hardcoding the full hierarchical name.
+# Connect dbg_hub/clk before opt_design if any debug cores exist.
 if {[llength [get_debug_cores -quiet dbg_hub]] > 0} {
   set clk_pin [lindex [get_pins -hierarchical -quiet -filter {IS_CLOCK == 1 && NAME =~ shell/dwidth_h2c/*}] 0]
   if {$clk_pin ne ""} {
     set clk_net [get_nets -of_objects $clk_pin]
     puts "INFO: connecting dbg_hub/clk to $clk_net"
     connect_debug_port dbg_hub/clk [get_nets $clk_net]
-  } else {
-    puts "ERROR: dbg_hub found but could not identify AXI clock net — aborting"
-    exit 1
   }
 }
 

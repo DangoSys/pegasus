@@ -1,19 +1,18 @@
 ################################################################################
 # AU280 PCIe reset (active-low)
-# Top-level is PegasusTop — no io_ prefix on port names
 ################################################################################
 set_property PACKAGE_PIN BF41      [get_ports pcie_sys_rst_n]
 set_property IOSTANDARD  LVCMOS18  [get_ports pcie_sys_rst_n]
 set_property PULLUP      true      [get_ports pcie_sys_rst_n]
 
 ################################################################################
-# HBM reference clock (100 MHz)
+# DDR4 reference clock — handled by Vivado board interface
+# (C0_CLOCK_BOARD_INTERFACE {sysclk0} / C0_DDR4_BOARD_INTERFACE {ddr4_sdram_c0}).
+# Pin constraints for BJ43/BJ44 are auto-generated; no manual entry needed here.
 ################################################################################
-create_clock -period 10.000 -name hbm_ref_clk [get_ports hbm_ref_clk]
 
 ################################################################################
-# PCIe sys_clk / sys_clk_gt are consumed by XDMA IP via IBUFDS_GTE4.
-# The unrouted IBUF on sys_clk_gt is suppressed via RTSTAT-1 Warning below.
+# PCIe sys_clk / sys_clk_gt consumed by XDMA via IBUFDS_GTE4.
 ################################################################################
 
 ################################################################################

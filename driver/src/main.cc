@@ -1,20 +1,27 @@
 // pegasus-driver — load and run workloads on AU280
 //
-// Subcommands:
-//   load  --kernel <elf>  --rootfs <img>
-//         [--h2c /dev/xdma0_h2c_0]
-//         [--rootfs-offset <hex>]   (HBM2 offset for rootfs, default: auto after kernel)
+// Memory layout (DDR4 AXI MM DMA mode):
+//   pwrite offset = SoC paddr - SOC_DRAM_BASE (0x80000000)
+//   kernel Image loaded at DDR4 offset 0x200000 (SoC paddr 0x80200000)
+//   rootfs loaded right after kernel, 4 MB aligned
 //
-//   run   [--control /dev/xdma0_control]
+// Subcommands:
+//   load  --kernel <image>  --rootfs <img>
+//         [--h2c /dev/xdma0_h2c_0]
+//         [--kernel-offset <hex>]    (DDR4 offset for kernel, default: 0x200000)
+//         [--rootfs-offset <hex>]    (DDR4 offset for rootfs, default: auto)
+//
+//   run   [--control /dev/xdma0_user]   (BAR0 → SCU AXI-Lite)
 //         [--uart /dev/ttyUSB0]
 //         [--log <path>]
 //         [--timeout <seconds>]
-//         [--sentinel <string>]     (stop collecting when this appears in UART output)
+//         [--sentinel <string>]
 
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <sys/stat.h>
 
 #include "xdma.h"
 #include "scu.h"
@@ -30,6 +37,8 @@ static uint64_t align_up(uint64_t v, uint64_t align) {
 static int cmd_load(int argc, char** argv) {
     std::string kernel, rootfs;
     std::string h2c_dev = "/dev/xdma0_h2c_0";
+    uint64_t kernel_offset = 0x200000ULL;  // default: SoC paddr 0x80200000
+    bool kernel_offset_set = false;
     uint64_t rootfs_offset = 0;
     bool rootfs_offset_set = false;
 
@@ -37,6 +46,10 @@ static int cmd_load(int argc, char** argv) {
         if      (!strcmp(argv[i], "--kernel")         && i+1 < argc) kernel = argv[++i];
         else if (!strcmp(argv[i], "--rootfs")          && i+1 < argc) rootfs = argv[++i];
         else if (!strcmp(argv[i], "--h2c")             && i+1 < argc) h2c_dev = argv[++i];
+        else if (!strcmp(argv[i], "--kernel-offset")   && i+1 < argc) {
+            kernel_offset = strtoull(argv[++i], nullptr, 0);
+            kernel_offset_set = true;
+        }
         else if (!strcmp(argv[i], "--rootfs-offset")   && i+1 < argc) {
             rootfs_offset = strtoull(argv[++i], nullptr, 0);
             rootfs_offset_set = true;
@@ -48,20 +61,24 @@ static int cmd_load(int argc, char** argv) {
         return 1;
     }
 
-    // 1. Write kernel ELF segments to HBM2
-    fprintf(stderr, "[load] writing kernel ELF: %s\n", kernel.c_str());
-    uint64_t entry = xdma::write_elf(h2c_dev, kernel);
-    if (entry == 0) {
-        fprintf(stderr, "[load] ELF write failed\n");
+    // 1. Write kernel Image (raw binary) to HBM2 at kernel_offset
+    fprintf(stderr, "[load] writing kernel: %s -> HBM2 offset 0x%lx (SoC paddr 0x%lx)\n",
+            kernel.c_str(), kernel_offset, kernel_offset + SOC_DRAM_BASE);
+    int krc = xdma::write_raw(h2c_dev, kernel_offset, kernel);
+    if (krc != 0) {
+        fprintf(stderr, "[load] kernel write failed: %d\n", krc);
         return 1;
     }
 
-    // 2. Auto-compute rootfs placement: right after last ELF segment, 4 MB aligned
+    // 2. Auto-compute rootfs placement: right after kernel, 4 MB aligned
     if (!rootfs_offset_set) {
-        uint64_t elf_end_paddr = xdma::elf_max_paddr(kernel);
-        uint64_t elf_end_hbm2  = elf_end_paddr > SOC_DRAM_BASE
-                                  ? elf_end_paddr - SOC_DRAM_BASE : 0;
-        rootfs_offset = align_up(elf_end_hbm2, ROOTFS_ALIGN);
+        struct stat st;
+        if (stat(kernel.c_str(), &st) != 0) {
+            fprintf(stderr, "[load] stat kernel failed\n");
+            return 1;
+        }
+        uint64_t kernel_end = kernel_offset + static_cast<uint64_t>(st.st_size);
+        rootfs_offset = align_up(kernel_end, ROOTFS_ALIGN);
         fprintf(stderr, "[load] auto rootfs HBM2 offset: 0x%lx (SoC paddr 0x%lx)\n",
                 rootfs_offset, rootfs_offset + SOC_DRAM_BASE);
     }
@@ -74,7 +91,8 @@ static int cmd_load(int argc, char** argv) {
         return 1;
     }
 
-    fprintf(stderr, "[load] done — kernel entry=0x%lx\n", entry);
+    fprintf(stderr, "[load] done — kernel @ SoC 0x%lx, rootfs @ SoC 0x%lx\n",
+            kernel_offset + SOC_DRAM_BASE, rootfs_offset + SOC_DRAM_BASE);
     return 0;
 }
 

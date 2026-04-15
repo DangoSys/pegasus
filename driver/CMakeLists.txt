@@ -14,7 +14,10 @@ add_executable(pegasus-driver
 target_include_directories(pegasus-driver PRIVATE src)
 
 # libelf for reading ELF kernel binary
-find_library(ELF_LIB elf REQUIRED)
-target_link_libraries(pegasus-driver PRIVATE ${ELF_LIB})
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBELF REQUIRED libelf)
+target_include_directories(pegasus-driver PRIVATE ${LIBELF_INCLUDE_DIRS})
+target_link_libraries(pegasus-driver PRIVATE ${LIBELF_LIBRARIES})
+target_link_directories(pegasus-driver PRIVATE ${LIBELF_LIBRARY_DIRS})
 
 install(TARGETS pegasus-driver DESTINATION bin)
