@@ -15,6 +15,14 @@ if {![file isdirectory $source_dir]} {
 
 file mkdir $output_dir
 set proj_dir [file normalize "$output_dir/project"]
+
+# Clean up stale IP directories from previous runs to prevent XCI conflicts.
+# Each build recreates the project; old IP dirs cause "IP name already in use" errors.
+set ip_dir [file normalize "$proj_dir/ip"]
+if {[file isdirectory $ip_dir]} {
+  puts "INFO: removing stale IP directory: $ip_dir"
+  file delete -force $ip_dir
+}
 file mkdir $proj_dir
 
 create_project pegasus_build $proj_dir -part $part_name -force
