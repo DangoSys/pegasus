@@ -13,7 +13,7 @@ create_ip -name axi_clock_converter \
 
 set_property -dict [list \
   CONFIG.ADDR_WIDTH  {34} \
-  CONFIG.DATA_WIDTH  {64} \
+  CONFIG.DATA_WIDTH  {512} \
   CONFIG.ID_WIDTH    {4} \
 ] [get_ips axi_clkconv_h2c]
 
@@ -28,8 +28,8 @@ create_ip -name axi_clock_converter \
 
 set_property -dict [list \
   CONFIG.ADDR_WIDTH  {34} \
-  CONFIG.DATA_WIDTH  {64} \
-  CONFIG.ID_WIDTH    {6} \
+  CONFIG.DATA_WIDTH  {512} \
+  CONFIG.ID_WIDTH    {4} \
 ] [get_ips axi_clkconv_soc]
 
 generate_target all [get_ips axi_clkconv_soc]

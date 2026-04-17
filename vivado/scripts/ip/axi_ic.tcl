@@ -15,10 +15,13 @@ create_ip -name axi_crossbar \
 set_property -dict [list \
   CONFIG.NUM_SI   {2} \
   CONFIG.NUM_MI   {1} \
-  CONFIG.DATA_WIDTH {64} \
+  CONFIG.DATA_WIDTH {512} \
   CONFIG.ADDR_WIDTH {34} \
   CONFIG.ID_WIDTH   {4} \
+  CONFIG.ADDR_RANGES {1} \
+  CONFIG.M00_A00_BASE_ADDR {0x0000000000000000} \
+  CONFIG.M00_A00_ADDR_WIDTH {34} \
 ] [get_ips axi_ic_ddr4]
 
 generate_target all [get_ips axi_ic_ddr4]
-puts "INFO: AXI crossbar (2→1, 64-bit/34-bit) IP generated"
+puts "INFO: AXI crossbar (2->1, 512-bit/34-bit full-range) IP generated"

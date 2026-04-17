@@ -34,7 +34,7 @@ set_param general.maxThreads 32
 set SCRIPT_DIR [file normalize [file dirname [info script]]]
 source "${SCRIPT_DIR}/ip/xdma.tcl"
 source "${SCRIPT_DIR}/ip/ddr4.tcl"
-source "${SCRIPT_DIR}/ip/dwidth_h2c.tcl"
+source "${SCRIPT_DIR}/ip/dwidth_soc.tcl"
 source "${SCRIPT_DIR}/ip/axi_clkconv.tcl"
 source "${SCRIPT_DIR}/ip/axi_ic.tcl"
 

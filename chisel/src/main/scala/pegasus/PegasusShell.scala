@@ -6,10 +6,9 @@ import chisel3.util.HasBlackBoxInline
 // PegasusShell: inline Verilog BlackBox wrapping XDMA + DDR4 + SCU.
 //
 // Architecture:
-//   XDMA M_AXI (512-bit, AXI MM DMA)  →  dwidth_h2c (512→64)
-//                                       →  axi_clkconv_h2c (axi_aclk→ui_clk)
+//   XDMA M_AXI (512-bit, AXI MM DMA)  →  axi_clkconv_h2c (axi_aclk→ui_clk)
 //                                       →  axi_ic_ddr4 (2→1 mux)  →  ddr4_0
-//   chip_mem (SoC, 256-bit)            →  dwidth_soc (256→64)
+//   chip_mem (SoC, 64-bit)             →  dwidth_soc (64→512)
 //                                       →  axi_clkconv_soc (axi_aclk→ui_clk)
 //                                       →  axi_ic_ddr4
 //   XDMA M_AXI_LITE (BAR1 AXI-Lite)   →  SCU (ctrl[0]=cpu_hold_reset)
@@ -197,14 +196,14 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  wire [1:0]  axil_rresp;
       |  wire        axil_rvalid, axil_rready;
       |
-      |  // ── dwidth_h2c master (64-bit) ────────────────────────────────────
+      |  // ── H2C pipeline master (512-bit) ──────────────────────────────────
       |  wire [33:0]  dh_awaddr;
       |  wire [7:0]   dh_awlen;
       |  wire [2:0]   dh_awsize;
       |  wire [1:0]   dh_awburst;
       |  wire         dh_awvalid, dh_awready;
-      |  wire [63:0]  dh_wdata;
-      |  wire [7:0]   dh_wstrb;
+      |  wire [511:0] dh_wdata;
+      |  wire [63:0]  dh_wstrb;
       |  wire         dh_wlast, dh_wvalid, dh_wready;
       |  wire [1:0]   dh_bresp;
       |  wire         dh_bvalid, dh_bready;
@@ -213,20 +212,20 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  wire [2:0]   dh_arsize;
       |  wire [1:0]   dh_arburst;
       |  wire         dh_arvalid, dh_arready;
-      |  wire [63:0]  dh_rdata;
+      |  wire [511:0] dh_rdata;
       |  wire [1:0]   dh_rresp;
       |  wire         dh_rlast, dh_rvalid, dh_rready;
       |
-      |  // ── dwidth_soc master (64-bit) ────────────────────────────────────
+      |  // ── dwidth_soc master (512-bit) ───────────────────────────────────
       |  wire [33:0]  ds_awaddr;
       |  wire [7:0]   ds_awlen;
       |  wire [2:0]   ds_awsize;
       |  wire [1:0]   ds_awburst;
       |  wire         ds_awvalid, ds_awready;
-      |  wire [63:0]  ds_wdata;
-      |  wire [7:0]   ds_wstrb;
+      |  wire [511:0] ds_wdata;
+      |  wire [63:0]  ds_wstrb;
       |  wire         ds_wlast, ds_wvalid, ds_wready;
-      |  wire [5:0]   ds_bid;
+      |  wire [3:0]   ds_bid;
       |  wire [1:0]   ds_bresp;
       |  wire         ds_bvalid, ds_bready;
       |  wire [33:0]  ds_araddr;
@@ -234,42 +233,42 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  wire [2:0]   ds_arsize;
       |  wire [1:0]   ds_arburst;
       |  wire         ds_arvalid, ds_arready;
-      |  wire [5:0]   ds_rid;
-      |  wire [63:0]  ds_rdata;
+      |  wire [3:0]   ds_rid;
+      |  wire [511:0] ds_rdata;
       |  wire [1:0]   ds_rresp;
       |  wire         ds_rlast, ds_rvalid, ds_rready;
       |
-      |  // ── axi_clkconv_h2c master (ui_clk domain, 64-bit) ───────────────
+      |  // ── axi_clkconv_h2c master (ui_clk domain, 512-bit) ──────────────
       |  wire [33:0]  ch_awaddr; wire [7:0] ch_awlen; wire [2:0] ch_awsize;
       |  wire [1:0]   ch_awburst; wire ch_awvalid, ch_awready;
-      |  wire [63:0]  ch_wdata; wire [7:0] ch_wstrb;
+      |  wire [511:0] ch_wdata; wire [63:0] ch_wstrb;
       |  wire         ch_wlast, ch_wvalid, ch_wready;
       |  wire [1:0]   ch_bresp; wire ch_bvalid, ch_bready;
       |  wire [33:0]  ch_araddr; wire [7:0] ch_arlen; wire [2:0] ch_arsize;
       |  wire [1:0]   ch_arburst; wire ch_arvalid, ch_arready;
-      |  wire [63:0]  ch_rdata; wire [1:0] ch_rresp;
+      |  wire [511:0] ch_rdata; wire [1:0] ch_rresp;
       |  wire         ch_rlast, ch_rvalid, ch_rready;
       |
-      |  // ── axi_clkconv_soc master (ui_clk domain, 64-bit) ───────────────
+      |  // ── axi_clkconv_soc master (ui_clk domain, 512-bit) ──────────────
       |  wire [33:0]  cs_awaddr; wire [7:0] cs_awlen; wire [2:0] cs_awsize;
       |  wire [1:0]   cs_awburst; wire cs_awvalid, cs_awready;
-      |  wire [63:0]  cs_wdata; wire [7:0] cs_wstrb;
+      |  wire [511:0] cs_wdata; wire [63:0] cs_wstrb;
       |  wire         cs_wlast, cs_wvalid, cs_wready;
-      |  wire [5:0]   cs_bid; wire [1:0] cs_bresp; wire cs_bvalid, cs_bready;
+      |  wire [3:0]   cs_bid; wire [1:0] cs_bresp; wire cs_bvalid, cs_bready;
       |  wire [33:0]  cs_araddr; wire [7:0] cs_arlen; wire [2:0] cs_arsize;
       |  wire [1:0]   cs_arburst; wire cs_arvalid, cs_arready;
-      |  wire [5:0]   cs_rid; wire [63:0] cs_rdata; wire [1:0] cs_rresp;
+      |  wire [3:0]   cs_rid; wire [511:0] cs_rdata; wire [1:0] cs_rresp;
       |  wire         cs_rlast, cs_rvalid, cs_rready;
       |
-      |  // ── ic master → DDR4 (64-bit, ui_clk) ───────────────────────────
+      |  // ── ic master -> DDR4 (512-bit, ui_clk) ──────────────────────────
       |  wire [33:0]  ic_awaddr; wire [7:0] ic_awlen; wire [2:0] ic_awsize;
       |  wire [1:0]   ic_awburst; wire ic_awvalid, ic_awready;
-      |  wire [63:0]  ic_wdata; wire [7:0] ic_wstrb;
+      |  wire [511:0] ic_wdata; wire [63:0] ic_wstrb;
       |  wire         ic_wlast, ic_wvalid, ic_wready;
       |  wire [1:0]   ic_bresp; wire ic_bvalid, ic_bready;
       |  wire [33:0]  ic_araddr; wire [7:0] ic_arlen; wire [2:0] ic_arsize;
       |  wire [1:0]   ic_arburst; wire ic_arvalid, ic_arready;
-      |  wire [63:0]  ic_rdata; wire [1:0] ic_rresp;
+      |  wire [511:0] ic_rdata; wire [1:0] ic_rresp;
       |  wire         ic_rlast, ic_rvalid, ic_rready;
       |
       |  wire cpu_hold_reset;
@@ -360,77 +359,77 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  assign axil_rvalid  = scu_rvalid_r;
       |  assign cpu_hold_reset = scu_ctrl[0];
       |
-      |  // ── H2C: XDMA 512-bit → 64-bit ───────────────────────────────────
-      |  axi_dwidth_converter_h2c dwidth_h2c (
+      |  // ── H2C: XDMA 512-bit (direct) ─────────────────────────────────────
+      |  assign dh_awaddr  = xdma_awaddr;
+      |  assign dh_awlen   = xdma_awlen;
+      |  assign dh_awsize  = xdma_awsize;
+      |  assign dh_awburst = xdma_awburst;
+      |  assign dh_awvalid = xdma_awvalid;
+      |  assign xdma_awready = dh_awready;
+      |  assign dh_wdata   = xdma_wdata;
+      |  assign dh_wstrb   = xdma_wstrb;
+      |  assign dh_wlast   = xdma_wlast;
+      |  assign dh_wvalid  = xdma_wvalid;
+      |  assign xdma_wready = dh_wready;
+      |  assign xdma_bid   = 4'h0;
+      |  assign xdma_bresp = dh_bresp;
+      |  assign xdma_bvalid = dh_bvalid;
+      |  assign dh_bready  = xdma_bready;
+      |  assign dh_araddr  = xdma_araddr;
+      |  assign dh_arlen   = xdma_arlen;
+      |  assign dh_arsize  = xdma_arsize;
+      |  assign dh_arburst = xdma_arburst;
+      |  assign dh_arvalid = xdma_arvalid;
+      |  assign xdma_arready = dh_arready;
+      |  assign xdma_rid   = 4'h0;
+      |  assign xdma_rdata = dh_rdata;
+      |  assign xdma_rresp = dh_rresp;
+      |  assign xdma_rlast = dh_rlast;
+      |  assign xdma_rvalid = dh_rvalid;
+      |  assign dh_rready  = xdma_rready;
+      |
+      |  // ── SoC: chip_mem 64-bit -> dwidth_soc 64->512 ────────────────────
+      |  axi_dwidth_converter_soc dwidth_soc (
       |    .s_axi_aclk(axi_aclk), .s_axi_aresetn(axi_aresetn),
-      |    .s_axi_awid(xdma_awid),       .s_axi_awaddr(xdma_awaddr),
-      |    .s_axi_awlen(xdma_awlen),     .s_axi_awsize(xdma_awsize),
-      |    .s_axi_awburst(xdma_awburst), .s_axi_awlock(1'b0),
-      |    .s_axi_awcache(4'h0),         .s_axi_awprot(3'h0),
-      |    .s_axi_awregion(4'h0),        .s_axi_awqos(4'h0),
-      |    .s_axi_awvalid(xdma_awvalid), .s_axi_awready(xdma_awready),
-      |    .s_axi_wdata(xdma_wdata),     .s_axi_wstrb(xdma_wstrb),
-      |    .s_axi_wlast(xdma_wlast),     .s_axi_wvalid(xdma_wvalid),
-      |    .s_axi_wready(xdma_wready),
-      |    .s_axi_bid(xdma_bid),         .s_axi_bresp(xdma_bresp),
-      |    .s_axi_bvalid(xdma_bvalid),   .s_axi_bready(xdma_bready),
-      |    .s_axi_arid(xdma_arid),       .s_axi_araddr(xdma_araddr),
-      |    .s_axi_arlen(xdma_arlen),     .s_axi_arsize(xdma_arsize),
-      |    .s_axi_arburst(xdma_arburst), .s_axi_arlock(1'b0),
-      |    .s_axi_arcache(4'h0),         .s_axi_arprot(3'h0),
-      |    .s_axi_arregion(4'h0),        .s_axi_arqos(4'h0),
-      |    .s_axi_arvalid(xdma_arvalid), .s_axi_arready(xdma_arready),
-      |    .s_axi_rid(xdma_rid),         .s_axi_rdata(xdma_rdata),
-      |    .s_axi_rresp(xdma_rresp),     .s_axi_rlast(xdma_rlast),
-      |    .s_axi_rvalid(xdma_rvalid),   .s_axi_rready(xdma_rready),
-      |    .m_axi_awaddr(dh_awaddr),     .m_axi_awlen(dh_awlen),
-      |    .m_axi_awsize(dh_awsize),     .m_axi_awburst(dh_awburst),
+      |    .s_axi_awid(chip_mem_awid),       .s_axi_awaddr({2'b0, chip_mem_awaddr}),
+      |    .s_axi_awlen(chip_mem_awlen),     .s_axi_awsize(chip_mem_awsize),
+      |    .s_axi_awburst(chip_mem_awburst), .s_axi_awlock(1'b0),
+      |    .s_axi_awcache(4'h0),             .s_axi_awprot(3'h0),
+      |    .s_axi_awregion(4'h0),            .s_axi_awqos(4'h0),
+      |    .s_axi_awvalid(chip_mem_awvalid), .s_axi_awready(chip_mem_awready),
+      |    .s_axi_wdata(chip_mem_wdata),     .s_axi_wstrb(chip_mem_wstrb),
+      |    .s_axi_wlast(chip_mem_wlast),     .s_axi_wvalid(chip_mem_wvalid),
+      |    .s_axi_wready(chip_mem_wready),
+      |    .s_axi_bid(chip_mem_bid),         .s_axi_bresp(chip_mem_bresp),
+      |    .s_axi_bvalid(chip_mem_bvalid),   .s_axi_bready(chip_mem_bready),
+      |    .s_axi_arid(chip_mem_arid),       .s_axi_araddr({2'b0, chip_mem_araddr}),
+      |    .s_axi_arlen(chip_mem_arlen),     .s_axi_arsize(chip_mem_arsize),
+      |    .s_axi_arburst(chip_mem_arburst), .s_axi_arlock(1'b0),
+      |    .s_axi_arcache(4'h0),             .s_axi_arprot(3'h0),
+      |    .s_axi_arregion(4'h0),            .s_axi_arqos(4'h0),
+      |    .s_axi_arvalid(chip_mem_arvalid), .s_axi_arready(chip_mem_arready),
+      |    .s_axi_rid(chip_mem_rid),         .s_axi_rdata(chip_mem_rdata),
+      |    .s_axi_rresp(chip_mem_rresp),     .s_axi_rlast(chip_mem_rlast),
+      |    .s_axi_rvalid(chip_mem_rvalid),   .s_axi_rready(chip_mem_rready),
+      |    .m_axi_awaddr(ds_awaddr),         .m_axi_awlen(ds_awlen),
+      |    .m_axi_awsize(ds_awsize),         .m_axi_awburst(ds_awburst),
       |    .m_axi_awlock(), .m_axi_awcache(), .m_axi_awprot(),
       |    .m_axi_awregion(), .m_axi_awqos(),
-      |    .m_axi_awvalid(dh_awvalid),   .m_axi_awready(dh_awready),
-      |    .m_axi_wdata(dh_wdata),       .m_axi_wstrb(dh_wstrb),
-      |    .m_axi_wlast(dh_wlast),       .m_axi_wvalid(dh_wvalid),
-      |    .m_axi_wready(dh_wready),
-      |    .m_axi_bresp(dh_bresp),       .m_axi_bvalid(dh_bvalid),
-      |    .m_axi_bready(dh_bready),
-      |    .m_axi_araddr(dh_araddr),     .m_axi_arlen(dh_arlen),
-      |    .m_axi_arsize(dh_arsize),     .m_axi_arburst(dh_arburst),
+      |    .m_axi_awvalid(ds_awvalid),       .m_axi_awready(ds_awready),
+      |    .m_axi_wdata(ds_wdata),           .m_axi_wstrb(ds_wstrb),
+      |    .m_axi_wlast(ds_wlast),           .m_axi_wvalid(ds_wvalid),
+      |    .m_axi_wready(ds_wready),
+      |    .m_axi_bresp(ds_bresp),           .m_axi_bvalid(ds_bvalid),
+      |    .m_axi_bready(ds_bready),
+      |    .m_axi_araddr(ds_araddr),         .m_axi_arlen(ds_arlen),
+      |    .m_axi_arsize(ds_arsize),         .m_axi_arburst(ds_arburst),
       |    .m_axi_arlock(), .m_axi_arcache(), .m_axi_arprot(),
       |    .m_axi_arregion(), .m_axi_arqos(),
-      |    .m_axi_arvalid(dh_arvalid),   .m_axi_arready(dh_arready),
-      |    .m_axi_rdata(dh_rdata),       .m_axi_rresp(dh_rresp),
-      |    .m_axi_rlast(dh_rlast),       .m_axi_rvalid(dh_rvalid),
-      |    .m_axi_rready(dh_rready)
+      |    .m_axi_arvalid(ds_arvalid),       .m_axi_arready(ds_arready),
+      |    .m_axi_rdata(ds_rdata),           .m_axi_rresp(ds_rresp),
+      |    .m_axi_rlast(ds_rlast),           .m_axi_rvalid(ds_rvalid),
+      |    .m_axi_rready(ds_rready)
       |  );
-      |
-      |  // ── SoC: chip_mem 64-bit → axi_clkconv_soc (direct, no dwidth) ──
-      |  assign ds_awaddr  = {2'b0, chip_mem_awaddr};
-      |  assign ds_awlen   = chip_mem_awlen;
-      |  assign ds_awsize  = chip_mem_awsize;
-      |  assign ds_awburst = chip_mem_awburst;
-      |  assign ds_awvalid = chip_mem_awvalid;
-      |  assign chip_mem_awready = ds_awready;
-      |  assign ds_wdata   = chip_mem_wdata;
-      |  assign ds_wstrb   = chip_mem_wstrb;
-      |  assign ds_wlast   = chip_mem_wlast;
-      |  assign ds_wvalid  = chip_mem_wvalid;
-      |  assign chip_mem_wready = ds_wready;
-      |  assign chip_mem_bid    = ds_bid[3:0];
-      |  assign chip_mem_bresp  = ds_bresp;
-      |  assign chip_mem_bvalid = ds_bvalid;
-      |  assign ds_bready  = chip_mem_bready;
-      |  assign ds_araddr  = {2'b0, chip_mem_araddr};
-      |  assign ds_arlen   = chip_mem_arlen;
-      |  assign ds_arsize  = chip_mem_arsize;
-      |  assign ds_arburst = chip_mem_arburst;
-      |  assign ds_arvalid = chip_mem_arvalid;
-      |  assign chip_mem_arready = ds_arready;
-      |  assign chip_mem_rid    = ds_rid[3:0];
-      |  assign chip_mem_rdata  = ds_rdata;
-      |  assign chip_mem_rresp  = ds_rresp;
-      |  assign chip_mem_rlast  = ds_rlast;
-      |  assign chip_mem_rvalid = ds_rvalid;
-      |  assign ds_rready  = chip_mem_rready;
       |
       |  // ── Clock converters: axi_aclk → ddr4_ui_clk ─────────────────────
       |  axi_clkconv_h2c clkconv_h2c (
@@ -498,7 +497,7 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  );
       |
       |  // ── AXI Crossbar 2→1 (ui_clk domain) ────────────────────────────
-      |  // axi_crossbar v2.1: vector ports, NUM_SI=2, NUM_MI=1, 64-bit/34-bit
+      |  // axi_crossbar v2.1: vector ports, NUM_SI=2, NUM_MI=1, 512-bit/34-bit
       |  // s_axi_*: [2*W-1:0] vectors, [1] = SoC (S01), [0] = H2C (S00)
       |  // m_axi_*: scalar (1 master)
       |  axi_ic_ddr4 axi_ic (
