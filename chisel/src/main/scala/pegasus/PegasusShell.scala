@@ -31,8 +31,20 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
     val pcie_exp_rxp    = Input(UInt(16.W))
     val pcie_exp_rxn    = Input(UInt(16.W))
 
-    // DDR4 physical pins are auto-handled by Vivado board interface
-    // (C0_CLOCK_BOARD_INTERFACE / C0_DDR4_BOARD_INTERFACE); no RTL ports needed.
+    // DDR4 physical pins
+    val c0_sys_clk_p   = Input(Bool())
+    val c0_sys_clk_n   = Input(Bool())
+    val c0_ddr4_act_n  = Output(Bool())
+    val c0_ddr4_adr    = Output(UInt(17.W))
+    val c0_ddr4_ba     = Output(UInt(2.W))
+    val c0_ddr4_bg     = Output(UInt(2.W))
+    val c0_ddr4_cke    = Output(UInt(1.W))
+    val c0_ddr4_odt    = Output(UInt(1.W))
+    val c0_ddr4_cs_n   = Output(UInt(1.W))
+    val c0_ddr4_ck_t   = Output(UInt(1.W))
+    val c0_ddr4_ck_c   = Output(UInt(1.W))
+    val c0_ddr4_reset_n = Output(Bool())
+    val c0_ddr4_parity = Output(Bool())
 
     // SoC clock/reset (from XDMA axi_aclk / SCU)
     val dut_clk   = Output(Clock())
@@ -86,7 +98,22 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  output [15:0] pcie_exp_txn,
       |  input  [15:0] pcie_exp_rxp,
       |  input  [15:0] pcie_exp_rxn,
-      |  // DDR4 physical pins handled by Vivado board interface — no RTL ports here.
+      |  input         c0_sys_clk_p,
+      |  input         c0_sys_clk_n,
+      |  output        c0_ddr4_act_n,
+      |  output [16:0] c0_ddr4_adr,
+      |  output [1:0]  c0_ddr4_ba,
+      |  output [1:0]  c0_ddr4_bg,
+      |  output [0:0]  c0_ddr4_cke,
+      |  output [0:0]  c0_ddr4_odt,
+      |  output [0:0]  c0_ddr4_cs_n,
+      |  output [0:0]  c0_ddr4_ck_t,
+      |  output [0:0]  c0_ddr4_ck_c,
+      |  output        c0_ddr4_reset_n,
+      |  output        c0_ddr4_parity,
+      |  inout  [71:0] c0_ddr4_dq,
+      |  inout  [17:0] c0_ddr4_dqs_c,
+      |  inout  [17:0] c0_ddr4_dqs_t,
       |  output        dut_clk,
       |  output        dut_reset,
       |  input         uart_tx,
@@ -535,14 +562,37 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  );
       |
       |  // ── DDR4 ─────────────────────────────────────────────────────────
-      |  // Physical pins (c0_sys_clk_p/n, c0_ddr4_act_n, c0_ddr4_adr, etc.) are
-      |  // NOT connected here — Vivado board interface (C0_CLOCK_BOARD_INTERFACE /
-      |  // C0_DDR4_BOARD_INTERFACE) auto-handles all physical pin connections.
       |  ddr4_0 ddr4 (
       |    .sys_rst(~pcie_sys_rst_n),
+      |    .c0_sys_clk_p(c0_sys_clk_p),
+      |    .c0_sys_clk_n(c0_sys_clk_n),
+      |    .c0_ddr4_act_n(c0_ddr4_act_n),
+      |    .c0_ddr4_adr(c0_ddr4_adr),
+      |    .c0_ddr4_ba(c0_ddr4_ba),
+      |    .c0_ddr4_bg(c0_ddr4_bg),
+      |    .c0_ddr4_cke(c0_ddr4_cke),
+      |    .c0_ddr4_odt(c0_ddr4_odt),
+      |    .c0_ddr4_cs_n(c0_ddr4_cs_n),
+      |    .c0_ddr4_ck_t(c0_ddr4_ck_t),
+      |    .c0_ddr4_ck_c(c0_ddr4_ck_c),
+      |    .c0_ddr4_reset_n(c0_ddr4_reset_n),
+      |    .c0_ddr4_parity(c0_ddr4_parity),
+      |    .c0_ddr4_dq(c0_ddr4_dq),
+      |    .c0_ddr4_dqs_c(c0_ddr4_dqs_c),
+      |    .c0_ddr4_dqs_t(c0_ddr4_dqs_t),
       |    .c0_ddr4_ui_clk(ddr4_ui_clk),
       |    .c0_ddr4_ui_clk_sync_rst(ddr4_ui_clk_sync_rst),
       |    .c0_ddr4_aresetn(ddr4_aresetn),
+      |    // AXI control slave (unused, tie-off)
+      |    .c0_ddr4_s_axi_ctrl_awvalid(1'b0),
+      |    .c0_ddr4_s_axi_ctrl_awaddr(32'h0),
+      |    .c0_ddr4_s_axi_ctrl_wvalid(1'b0),
+      |    .c0_ddr4_s_axi_ctrl_wdata(32'h0),
+      |    .c0_ddr4_s_axi_ctrl_bready(1'b1),
+      |    .c0_ddr4_s_axi_ctrl_arvalid(1'b0),
+      |    .c0_ddr4_s_axi_ctrl_araddr(32'h0),
+      |    .c0_ddr4_s_axi_ctrl_rready(1'b1),
+      |    .c0_ddr4_interrupt(),
       |    // AXI slave
       |    .c0_ddr4_s_axi_awid(4'h0),
       |    .c0_ddr4_s_axi_awaddr(ic_awaddr),

@@ -1,9 +1,8 @@
 ################################################################################
 # AU280 PCIe reset (active-low)
+# Use board pin mapping to avoid conflicts with DDR4 board constraints.
 ################################################################################
-set_property PACKAGE_PIN BF41      [get_ports pcie_sys_rst_n]
-set_property IOSTANDARD  LVCMOS18  [get_ports pcie_sys_rst_n]
-set_property PULLUP      true      [get_ports pcie_sys_rst_n]
+set_property BOARD_PIN {pcie_perstn} [get_ports pcie_sys_rst_n]
 
 ################################################################################
 # DDR4 reference clock — handled by Vivado board interface
