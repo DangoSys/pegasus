@@ -1,15 +1,15 @@
 // pegasus-driver — load and run workloads on AU280
 //
-// Memory layout (DDR4 AXI MM DMA mode):
+// Memory layout (DDR AXI MM DMA mode):
 //   pwrite offset = SoC paddr - SOC_DRAM_BASE (0x80000000)
-//   kernel Image loaded at DDR4 offset 0x200000 (SoC paddr 0x80200000)
+//   kernel image loaded at DDR offset 0x200000 (SoC paddr 0x80200000)
 //   rootfs loaded right after kernel, 4 MB aligned
 //
 // Subcommands:
 //   load  --kernel <image>  --rootfs <img>
 //         [--h2c /dev/xdma0_h2c_0]
-//         [--kernel-offset <hex>]    (DDR4 offset for kernel, default: 0x200000)
-//         [--rootfs-offset <hex>]    (DDR4 offset for rootfs, default: auto)
+//         [--kernel-offset <hex>]    (DDR offset for kernel, default: 0x200000)
+//         [--rootfs-offset <hex>]    (DDR offset for rootfs, default: auto)
 //
 //   run   [--control /dev/xdma0_user]   (BAR0 → SCU AXI-Lite)
 //         [--uart /dev/ttyUSB0]
@@ -61,8 +61,8 @@ static int cmd_load(int argc, char** argv) {
         return 1;
     }
 
-    // 1. Write kernel Image (raw binary) to HBM2 at kernel_offset
-    fprintf(stderr, "[load] writing kernel: %s -> HBM2 offset 0x%lx (SoC paddr 0x%lx)\n",
+    // 1. Write kernel image (raw binary) to DDR at kernel_offset
+    fprintf(stderr, "[load] writing kernel: %s -> DDR offset 0x%lx (SoC paddr 0x%lx)\n",
             kernel.c_str(), kernel_offset, kernel_offset + SOC_DRAM_BASE);
     int krc = xdma::write_raw(h2c_dev, kernel_offset, kernel);
     if (krc != 0) {
@@ -79,7 +79,7 @@ static int cmd_load(int argc, char** argv) {
         }
         uint64_t kernel_end = kernel_offset + static_cast<uint64_t>(st.st_size);
         rootfs_offset = align_up(kernel_end, ROOTFS_ALIGN);
-        fprintf(stderr, "[load] auto rootfs HBM2 offset: 0x%lx (SoC paddr 0x%lx)\n",
+        fprintf(stderr, "[load] auto rootfs DDR offset: 0x%lx (SoC paddr 0x%lx)\n",
                 rootfs_offset, rootfs_offset + SOC_DRAM_BASE);
     }
 
