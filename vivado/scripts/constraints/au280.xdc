@@ -1,16 +1,7 @@
 ################################################################################
-# AU280 PCIe reset (active-low, board pcie_perstn pin).
-################################################################################
-set_property BOARD_PIN {pcie_perstn} [get_ports pcie_sys_rst_n]
-
-################################################################################
-# DDR4 reference clock — handled by Vivado board interface
-# (C0_CLOCK_BOARD_INTERFACE {sysclk0} / C0_DDR4_BOARD_INTERFACE {ddr4_sdram_c0}).
-################################################################################
-
-################################################################################
-# PCIe sys_clk / sys_clk_gt: routed to the PCIe refclk pads by Vivado based on
-# board_part. Consumed by XDMA (via IBUFDS_GTE4 inside PegasusShell).
+# AU280 board constraints for Pegasus.
+# PCIe refclk, reset, and DDR4 pins are handled by Vivado board interfaces
+# (pcie_refclk, pcie_perstn, sysclk0, ddr4_sdram_c0) set in IP configurations.
 ################################################################################
 
 ################################################################################
