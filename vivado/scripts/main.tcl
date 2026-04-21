@@ -97,7 +97,10 @@ update_compile_order -fileset sources_1
 read_xdc "${SCRIPT_DIR}/constraints/au280.xdc"
 
 # ── Synthesis ────────────────────────────────────────────────────────────────
-synth_design -top $top_name -part $part_name
+# -retiming: allow register rebalancing across combinational logic for better timing
+# -flatten_hierarchy rebuilt: flatten then rebuild — exposes more optimization opportunities
+synth_design -top $top_name -part $part_name \
+  -retiming -flatten_hierarchy rebuilt
 write_checkpoint -force "$output_dir/post_synth.dcp"
 
 # Connect dbg_hub/clk before opt_design if any debug cores exist.
@@ -111,9 +114,11 @@ if {[llength [get_debug_cores -quiet dbg_hub]] > 0} {
 }
 
 # ── Implementation ───────────────────────────────────────────────────────────
-opt_design
-place_design
-route_design
+# Performance-oriented strategies: use more area/routing resources for timing.
+opt_design -directive ExploreWithRemap
+place_design -directive ExtraNetDelay_high
+phys_opt_design -directive AggressiveExplore
+route_design -directive AggressiveExplore
 
 # Re-apply DRC relaxation after route (some checks are only evaluated post-route)
 set_property SEVERITY Warning [get_drc_checks RTSTAT-1]

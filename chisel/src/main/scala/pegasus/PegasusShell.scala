@@ -178,20 +178,22 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |);
       |
       |  // ── Clocks & resets ───────────────────────────────────────────────
-      |  wire axi_aclk;
+      |  wire axi_aclk;       // 250 MHz from XDMA
       |  wire axi_aresetn;
-      |  wire ui_clk;
+      |  wire soc_clk;        // 150 MHz from clk_wiz (for DigitalTop + crossbar + dwidth)
+      |  wire soc_aresetn;
+      |  wire ui_clk;         // ~300 MHz from DDR4 MIG
       |  wire ui_clk_sync_rst;
       |  wire ui_aresetn = ~ui_clk_sync_rst;
       |  wire resetn     = pcie_sys_rst_n;
       |  wire ddr4_sys_rst = ~resetn;
       |
-      |  // DUT runs on axi_aclk (unified clock domain)
-      |  assign dut_clk   = axi_aclk;
-      |  assign dut_reset = ~axi_aresetn;
+      |  // DUT runs on soc_clk (150 MHz)
+      |  assign dut_clk   = soc_clk;
+      |  assign dut_reset = ~soc_aresetn;
       |
       |  // ── XDMA BD wrapper wires ─────────────────────────────────────────
-      |  // dma_axi: 64-bit AXI from XDMA (after 512→64 dwidth in BD), axi_aclk
+      |  // dma_axi: 64-bit AXI from XDMA (after 512→64 dwidth + clkconv in BD), soc_clk
       |  // Note: dwidth_h2c strips ID signals; BD wrapper has no awid/bid/arid/rid.
       |  wire [63:0] dma_awaddr;  wire [7:0]  dma_awlen;
       |  wire [2:0]  dma_awsize;  wire [1:0]  dma_awburst;
@@ -227,6 +229,8 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |    .pcie_sys_rst_n   (pcie_sys_rst_n),
       |    .axi_aclk         (axi_aclk),
       |    .axi_aresetn      (axi_aresetn),
+      |    .soc_clk          (soc_clk),
+      |    .soc_aresetn      (soc_aresetn),
       |    .pcie_mgt_txn     (pcie_exp_txn),
       |    .pcie_mgt_txp     (pcie_exp_txp),
       |    .pcie_mgt_rxn     (pcie_exp_rxn),
@@ -334,8 +338,8 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  reg [3:0]  mmio_bid_r, mmio_rid_r;
       |  reg        mmio_bvalid_r, mmio_rvalid_r;
       |
-      |  always @(posedge axi_aclk or negedge axi_aresetn) begin
-      |    if (!axi_aresetn) begin
+      |  always @(posedge soc_clk or negedge soc_aresetn) begin
+      |    if (!soc_aresetn) begin
       |      mmio_aw_pend  <= 1'b0;
       |      mmio_bvalid_r <= 1'b0;
       |      mmio_rvalid_r <= 1'b0;
@@ -403,8 +407,8 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  wire [1:0]  xbar_s_rvalid;  wire [1:0]  xbar_s_arready;
       |
       |  axi_ic_ddr4 xbar (
-      |    .aclk           (axi_aclk),
-      |    .aresetn        (axi_aresetn),
+      |    .aclk           (soc_clk),
+      |    .aresetn        (soc_aresetn),
       |    // Slave ports (concatenated: {S1, S0})
       |    .s_axi_awid     ({chip_mem_awid,    4'h0}),
       |    .s_axi_awaddr   ({chip_mem_awaddr,  dma_awaddr[31:0]}),
@@ -520,8 +524,8 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  wire         ddr_rlast,   ddr_rvalid, ddr_rready;
       |
       |  axi_dwidth dwidth_soc (
-      |    .s_axi_aclk    (axi_aclk),
-      |    .s_axi_aresetn (axi_aresetn),
+      |    .s_axi_aclk    (soc_clk),
+      |    .s_axi_aresetn (soc_aresetn),
       |    .s_axi_awid    (xbar_m_awid),
       |    .s_axi_awaddr  ({2'b0, xbar_m_awaddr}),
       |    .s_axi_awlen   (xbar_m_awlen),
