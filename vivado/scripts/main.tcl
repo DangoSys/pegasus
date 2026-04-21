@@ -53,26 +53,6 @@ if {[llength $all_ips] > 0} {
   export_ip_user_files -of_objects $all_ips -no_script -sync -force -quiet
 }
 
-# Keep standalone IP handling aligned with FireSim-style flow:
-# synthesize non-BD IPs explicitly so top-level synthesis can resolve modules.
-set standalone_ips [get_ips -quiet {ddr4_0 axi_dwidth}]
-if {[llength $standalone_ips] > 0} {
-  synth_ip $standalone_ips
-}
-
-# Work around occasional project-mode omission of xci elaboration:
-# add axi_dwidth and axi_ic_ddr4 synth wrappers explicitly when available.
-set axi_dwidth_v [file normalize "$proj_dir/ip/axi_dwidth/synth/axi_dwidth.v"]
-if {[file exists $axi_dwidth_v]} {
-  add_files -norecurse $axi_dwidth_v
-  puts "INFO: added explicit IP HDL: $axi_dwidth_v"
-}
-set axi_ic_v [file normalize "$proj_dir/ip/axi_ic_ddr4/synth/axi_ic_ddr4.v"]
-if {[file exists $axi_ic_v]} {
-  add_files -norecurse $axi_ic_v
-  puts "INFO: added explicit IP HDL: $axi_ic_v"
-}
-
 # ── RTL Sources ──────────────────────────────────────────────────────────────
 set sv_files [glob -nocomplain -directory $source_dir *.sv]
 set v_files  [glob -nocomplain -directory $source_dir *.v]

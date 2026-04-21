@@ -28,4 +28,9 @@ set_property -dict [list \
 ] [get_ips ddr4_0]
 
 generate_target all [get_ips ddr4_0]
+
+# GLOBAL mode: DDR4 has deep submodule hierarchy (ddr4_0 → ddr4_0_ddr4 → ...),
+# OOC mode fails in project mode. Inline all submodules during top-level synth.
+set_property generate_synth_checkpoint false [get_files [get_property IP_FILE [get_ips ddr4_0]]]
+
 puts "INFO: DDR4 IP generated (firesim-aligned)"

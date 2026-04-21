@@ -21,4 +21,5 @@ set_property -dict [list \
 ] [get_ips axi_dwidth]
 
 generate_target all [get_ips axi_dwidth]
+set_property generate_synth_checkpoint false [get_files [get_property IP_FILE [get_ips axi_dwidth]]]
 puts "INFO: axi_dwidth (64->512 ACLK_ASYNC) IP generated"

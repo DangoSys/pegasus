@@ -23,8 +23,9 @@ set_property -dict [list \
   CONFIG.M00_A00_ADDR_WIDTH {32} \
 ] [get_ips axi_ic_ddr4]
 
-# Use GLOBAL mode (not OOC) so all submodules are visible during top-level synth.
-set_property generate_synth_checkpoint false [get_files [get_property IP_FILE [get_ips axi_ic_ddr4]]]
-
 generate_target all [get_ips axi_ic_ddr4]
+
+# Use GLOBAL mode so crossbar submodules (axi_crossbar_v2_1_*) are visible
+# during top-level synth. Standalone create_ip allows this property.
+set_property generate_synth_checkpoint false [get_files [get_property IP_FILE [get_ips axi_ic_ddr4]]]
 puts "INFO: axi_ic_ddr4 (2->1 crossbar, 64b/32b) IP generated"

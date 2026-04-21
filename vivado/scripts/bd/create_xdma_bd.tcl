@@ -50,10 +50,10 @@ create_bd_port -dir O -type rst axi_aresetn
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports pcie_sys_rst_n]
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports axi_aresetn]
 
-# ── IRQ tie-off ──────────────────────────────────────────────────────────────
+# ── IRQ tie-off (1-bit for xdma_rnum_chnl=4 with usr_irq_req width=1) ───────
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 irq_const
 set_property -dict [list \
-  CONFIG.CONST_WIDTH {4} \
+  CONFIG.CONST_WIDTH {1} \
   CONFIG.CONST_VAL   {0} \
 ] [get_bd_cells irq_const]
 connect_bd_net [get_bd_pins irq_const/dout] [get_bd_pins xdma_0/usr_irq_req]
@@ -84,12 +84,17 @@ set_property name dma_axil [get_bd_intf_ports M_AXI_LITE_0]
 make_bd_intf_pins_external [get_bd_intf_pins xdma_0/pcie_mgt]
 set_property name pcie_mgt [get_bd_intf_ports pcie_mgt_0]
 
+# ── Address mapping for external interfaces ─────────────────────────────────
+# Assign full address range so BD validation passes.
+assign_bd_address -target_address_space /xdma_0/M_AXI \
+  [get_bd_addr_segs dma_axi/Reg] -force
+assign_bd_address -target_address_space /xdma_0/M_AXI_LITE \
+  [get_bd_addr_segs dma_axil/Reg] -force
+
 # ── Clock frequency annotations ─────────────────────────────────────────────
 set_property CONFIG.FREQ_HZ 250000000 [get_bd_ports axi_aclk]
 set_property CONFIG.ASSOCIATED_RESET {axi_aresetn} [get_bd_ports axi_aclk]
 set_property CONFIG.ASSOCIATED_BUSIF {dma_axi:dma_axil} [get_bd_ports axi_aclk]
-set_property CONFIG.FREQ_HZ 250000000 [get_bd_intf_ports dma_axi]
-set_property CONFIG.FREQ_HZ 250000000 [get_bd_intf_ports dma_axil]
 
 validate_bd_design
 save_bd_design
