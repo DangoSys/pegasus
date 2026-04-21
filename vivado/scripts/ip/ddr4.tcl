@@ -1,7 +1,5 @@
-# DDR4 IP — AU280 on-board DDR4 RDIMM, configured via board interface
-# Key: Debug_Signal {Disable} prevents MicroBlaze debug subsystem from being generated,
-# which avoids the multi-hour OOC synthesis of the bd_0 subsystem.
-# Matches firesim create_bd_2021.1.tcl configuration exactly.
+# DDR4 IP — AU280 on-board DDR4 RDIMM.
+# Mirrors FireSim's create_bd_2021.1.tcl ddr4_0 configuration exactly.
 if {![info exists proj_dir]} {
   error "proj_dir must be set before sourcing ddr4.tcl"
 }
@@ -15,18 +13,19 @@ create_ip -name ddr4 \
           -dir [file normalize "$proj_dir/ip"]
 
 set_property -dict [list \
-  CONFIG.C0_CLOCK_BOARD_INTERFACE   {sysclk0} \
-  CONFIG.C0_DDR4_BOARD_INTERFACE    {ddr4_sdram_c0} \
-  CONFIG.C0.DDR4_AUTO_AP_COL_A3     {true} \
-  CONFIG.C0.DDR4_MCS_ECC            {false} \
-  CONFIG.C0.DDR4_AxiDataWidth       {512} \
-  CONFIG.C0.DDR4_AxiAddressWidth    {34} \
-  CONFIG.C0.DDR4_AxiIDWidth         {4} \
-  CONFIG.C0.DDR4_AxiNarrowBurst     {true} \
-  CONFIG.Debug_Signal               {Disable} \
-  CONFIG.RESET_BOARD_INTERFACE      {resetn} \
-  CONFIG.C0.DDR4_AxiSelection       {true} \
+  CONFIG.C0.DDR4_AUTO_AP_COL_A3   {true} \
+  CONFIG.C0.DDR4_AxiSelection     {true} \
+  CONFIG.C0.DDR4_AxiDataWidth     {512} \
+  CONFIG.C0.DDR4_AxiAddressWidth  {34} \
+  CONFIG.C0.DDR4_AxiIDWidth       {4} \
+  CONFIG.C0.DDR4_AxiNarrowBurst   {true} \
+  CONFIG.C0.DDR4_InputClockPeriod {9996} \
+  CONFIG.C0.DDR4_MCS_ECC          {false} \
+  CONFIG.C0_CLOCK_BOARD_INTERFACE {sysclk0} \
+  CONFIG.C0_DDR4_BOARD_INTERFACE  {ddr4_sdram_c0} \
+  CONFIG.Debug_Signal             {Disable} \
+  CONFIG.RESET_BOARD_INTERFACE    {resetn} \
 ] [get_ips ddr4_0]
 
 generate_target all [get_ips ddr4_0]
-puts "INFO: DDR4 IP generated (AU280 board interface, Debug disabled)"
+puts "INFO: DDR4 IP generated (firesim-aligned)"

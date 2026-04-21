@@ -167,8 +167,8 @@ int write_raw(const std::string& h2c_dev, uint64_t hbm2_offset,
     int xdma_fd = open(h2c_dev.c_str(), O_RDWR);
     if (xdma_fd < 0) { close(img_fd); return -errno; }
 
-    // Stream in 4MB chunks to avoid huge allocations
-    const size_t CHUNK = 4 * 1024 * 1024;
+    // Use smaller chunks to avoid long single H2C transactions timing out.
+    const size_t CHUNK = 1 * 1024 * 1024;
     std::vector<char> buf(CHUNK);
     size_t written = 0;
     int rc = 0;
@@ -179,9 +179,14 @@ int write_raw(const std::string& h2c_dev, uint64_t hbm2_offset,
         if (n <= 0) { rc = -EIO; break; }
         rc = pwrite_all(xdma_fd, buf.data(), static_cast<size_t>(n),
                         static_cast<off_t>(hbm2_offset + written));
-        if (rc != 0) break;
+        if (rc != 0) {
+            fprintf(stderr,
+                    "[xdma] write failed: rc=%d offset=0x%lx chunk=0x%zx\n",
+                    rc, hbm2_offset + written, static_cast<size_t>(n));
+            break;
+        }
         written += static_cast<size_t>(n);
-        fprintf(stderr, "\r[xdma] rootfs: %zu/%zu MB",
+        fprintf(stderr, "\r[xdma] write: %zu/%zu MB",
                 written / (1024*1024), img_size / (1024*1024));
     }
     fprintf(stderr, "\n");

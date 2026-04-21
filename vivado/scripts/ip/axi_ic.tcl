@@ -1,6 +1,6 @@
-# AXI Crossbar: 2 slaves (H2C + SoC) → 1 master (DDR4)
-# axi_crossbar v2.1: vector ports s_axi_*/m_axi_*, configurable width
-# NUM_SI=2 slaves, NUM_MI=1 master, 64-bit data, 34-bit addr
+# AXI Crossbar — 2 slaves (XDMA DMA + SoC mem_axi4) -> 1 master (DDR4 dwidth).
+# 64-bit data, 32-bit address, 4-bit ID.
+# Uses GLOBAL synth_checkpoint_mode so top-level synth resolves submodules directly.
 if {![info exists proj_dir]} {
   error "proj_dir must be set before sourcing axi_ic.tcl"
 }
@@ -13,15 +13,18 @@ create_ip -name axi_crossbar \
           -dir [file normalize "$proj_dir/ip"]
 
 set_property -dict [list \
-  CONFIG.NUM_SI   {2} \
-  CONFIG.NUM_MI   {1} \
-  CONFIG.DATA_WIDTH {512} \
-  CONFIG.ADDR_WIDTH {34} \
-  CONFIG.ID_WIDTH   {4} \
-  CONFIG.ADDR_RANGES {1} \
-  CONFIG.M00_A00_BASE_ADDR {0x0000000000000000} \
-  CONFIG.M00_A00_ADDR_WIDTH {34} \
+  CONFIG.NUM_SI             {2} \
+  CONFIG.NUM_MI             {1} \
+  CONFIG.DATA_WIDTH         {64} \
+  CONFIG.ADDR_WIDTH         {32} \
+  CONFIG.ID_WIDTH           {4} \
+  CONFIG.ADDR_RANGES        {1} \
+  CONFIG.M00_A00_BASE_ADDR  {0x0000000000000000} \
+  CONFIG.M00_A00_ADDR_WIDTH {32} \
 ] [get_ips axi_ic_ddr4]
 
+# Use GLOBAL mode (not OOC) so all submodules are visible during top-level synth.
+set_property generate_synth_checkpoint false [get_files [get_property IP_FILE [get_ips axi_ic_ddr4]]]
+
 generate_target all [get_ips axi_ic_ddr4]
-puts "INFO: AXI crossbar (2->1, 512-bit/34-bit full-range) IP generated"
+puts "INFO: axi_ic_ddr4 (2->1 crossbar, 64b/32b) IP generated"

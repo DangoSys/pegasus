@@ -1,0 +1,95 @@
+# XDMA Block Design — simplified for unified axi_aclk domain.
+# XDMA M_AXI (512b) → dwidth (512→64) → dma_axi (64b, axi_aclk).
+# No clock converter, no clk_wiz — everything stays on axi_aclk.
+if {![info exists proj_dir]} {
+  error "proj_dir must be set before sourcing create_xdma_bd.tcl"
+}
+
+set bd_name pegasus_xdma_bd
+create_bd_design $bd_name
+
+# ── XDMA IP ──────────────────────────────────────────────────────────────────
+create_bd_cell -type ip -vlnv xilinx.com:ip:xdma:4.1 xdma_0
+set_property -dict [list \
+  CONFIG.PCIE_BOARD_INTERFACE        {pci_express_x16} \
+  CONFIG.SYS_RST_N_BOARD_INTERFACE   {pcie_perstn} \
+  CONFIG.axilite_master_en           {true} \
+  CONFIG.axilite_master_size         {32} \
+  CONFIG.pf0_msix_cap_pba_bir        {BAR_1} \
+  CONFIG.pf0_msix_cap_table_bir      {BAR_1} \
+  CONFIG.xdma_axi_intf_mm            {AXI_Memory_Mapped} \
+  CONFIG.xdma_rnum_chnl              {4} \
+  CONFIG.xdma_wnum_chnl              {4} \
+] [get_bd_cells xdma_0]
+
+# ── Dwidth: 512→64, synchronous (same axi_aclk) ─────────────────────────────
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dwidth_converter:2.1 dwidth_h2c
+set_property -dict [list \
+  CONFIG.ADDR_WIDTH    {64} \
+  CONFIG.SI_DATA_WIDTH {512} \
+  CONFIG.MI_DATA_WIDTH {64} \
+  CONFIG.SI_ID_WIDTH   {4} \
+  CONFIG.ACLK_ASYNC    {0} \
+] [get_bd_cells dwidth_h2c]
+
+# ── External ports ───────────────────────────────────────────────────────────
+create_bd_port -dir I -type clk pcie_sys_clk
+create_bd_port -dir I -type clk pcie_sys_clk_gt
+create_bd_port -dir I -type rst pcie_sys_rst_n
+create_bd_port -dir O -type clk axi_aclk
+create_bd_port -dir O -type rst axi_aresetn
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports pcie_sys_rst_n]
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports axi_aresetn]
+
+# ── IRQ tie-off ──────────────────────────────────────────────────────────────
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 irq_const
+set_property -dict [list \
+  CONFIG.CONST_WIDTH {4} \
+  CONFIG.CONST_VAL   {0} \
+] [get_bd_cells irq_const]
+connect_bd_net [get_bd_pins irq_const/dout] [get_bd_pins xdma_0/usr_irq_req]
+
+# ── Clock/reset wiring ───────────────────────────────────────────────────────
+connect_bd_net [get_bd_ports pcie_sys_clk] [get_bd_pins xdma_0/sys_clk]
+connect_bd_net [get_bd_ports pcie_sys_clk_gt] [get_bd_pins xdma_0/sys_clk_gt]
+connect_bd_net [get_bd_ports pcie_sys_rst_n] [get_bd_pins xdma_0/sys_rst_n]
+connect_bd_net [get_bd_ports axi_aclk] [get_bd_pins xdma_0/axi_aclk]
+connect_bd_net [get_bd_ports axi_aresetn] [get_bd_pins xdma_0/axi_aresetn]
+
+# dwidth_h2c: same clock domain as XDMA
+connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins dwidth_h2c/s_axi_aclk]
+connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins dwidth_h2c/s_axi_aresetn]
+
+# ── Data path: XDMA M_AXI (512b) → dwidth → dma_axi (64b) ──────────────────
+connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins dwidth_h2c/S_AXI]
+
+make_bd_intf_pins_external [get_bd_intf_pins dwidth_h2c/M_AXI]
+set_property name dma_axi [get_bd_intf_ports M_AXI_0]
+
+# ── AXI-Lite export ─────────────────────────────────────────────────────────
+make_bd_intf_pins_external [get_bd_intf_pins xdma_0/M_AXI_LITE]
+set_property name dma_axil [get_bd_intf_ports M_AXI_LITE_0]
+
+# ── PCIe MGT export ─────────────────────────────────────────────────────────
+make_bd_intf_pins_external [get_bd_intf_pins xdma_0/pcie_mgt]
+set_property name pcie_mgt [get_bd_intf_ports pcie_mgt_0]
+
+# ── Clock frequency annotations ─────────────────────────────────────────────
+set_property CONFIG.FREQ_HZ 100000000 [get_bd_ports pcie_sys_clk]
+set_property CONFIG.FREQ_HZ 100000000 [get_bd_ports pcie_sys_clk_gt]
+set_property CONFIG.FREQ_HZ 250000000 [get_bd_ports axi_aclk]
+set_property CONFIG.ASSOCIATED_RESET {axi_aresetn} [get_bd_ports axi_aclk]
+set_property CONFIG.ASSOCIATED_BUSIF {dma_axi:dma_axil} [get_bd_ports axi_aclk]
+set_property CONFIG.FREQ_HZ 250000000 [get_bd_intf_ports dma_axi]
+set_property CONFIG.FREQ_HZ 250000000 [get_bd_intf_ports dma_axil]
+
+validate_bd_design
+save_bd_design
+
+set bd_file [get_files "${proj_dir}/pegasus_build.srcs/sources_1/bd/${bd_name}/${bd_name}.bd"]
+set_property synth_checkpoint_mode None $bd_file
+generate_target all $bd_file
+export_ip_user_files -of_objects $bd_file -no_script -sync -force -quiet
+make_wrapper -files $bd_file -top -import
+
+puts "INFO: BD generated: ${bd_name} (wrapper imported)"

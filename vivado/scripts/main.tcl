@@ -32,11 +32,11 @@ set_param general.maxThreads 32
 
 # ── IP Generation ────────────────────────────────────────────────────────────
 set SCRIPT_DIR [file normalize [file dirname [info script]]]
-source "${SCRIPT_DIR}/ip/xdma.tcl"
+source "${SCRIPT_DIR}/bd/create_xdma_bd.tcl"
 source "${SCRIPT_DIR}/ip/ddr4.tcl"
-source "${SCRIPT_DIR}/ip/dwidth_soc.tcl"
-source "${SCRIPT_DIR}/ip/axi_clkconv.tcl"
+source "${SCRIPT_DIR}/ip/axi_dwidth.tcl"
 source "${SCRIPT_DIR}/ip/axi_ic.tcl"
+source "${SCRIPT_DIR}/ip/proc_sys_reset.tcl"
 
 # Add IP XCI files so Vivado tracks them for OOC synthesis
 set xci_files [glob -nocomplain -directory [file normalize "$proj_dir/ip"] -type f */*.xci]
@@ -47,9 +47,31 @@ if {[llength $xci_files] > 0} {
   puts "WARNING: no XCI files found under $proj_dir/ip"
 }
 
-# Run OOC (out-of-context) synthesis for all IPs before top-level synth.
-# synth_ip synthesises the IP in-process and registers the result with the project.
-synth_ip [get_ips]
+# Ensure Vivado exports usable HDL products for project-mode synthesis.
+set all_ips [get_ips -quiet]
+if {[llength $all_ips] > 0} {
+  export_ip_user_files -of_objects $all_ips -no_script -sync -force -quiet
+}
+
+# Keep standalone IP handling aligned with FireSim-style flow:
+# synthesize non-BD IPs explicitly so top-level synthesis can resolve modules.
+set standalone_ips [get_ips -quiet {ddr4_0 axi_dwidth}]
+if {[llength $standalone_ips] > 0} {
+  synth_ip $standalone_ips
+}
+
+# Work around occasional project-mode omission of xci elaboration:
+# add axi_dwidth and axi_ic_ddr4 synth wrappers explicitly when available.
+set axi_dwidth_v [file normalize "$proj_dir/ip/axi_dwidth/synth/axi_dwidth.v"]
+if {[file exists $axi_dwidth_v]} {
+  add_files -norecurse $axi_dwidth_v
+  puts "INFO: added explicit IP HDL: $axi_dwidth_v"
+}
+set axi_ic_v [file normalize "$proj_dir/ip/axi_ic_ddr4/synth/axi_ic_ddr4.v"]
+if {[file exists $axi_ic_v]} {
+  add_files -norecurse $axi_ic_v
+  puts "INFO: added explicit IP HDL: $axi_ic_v"
+}
 
 # ── RTL Sources ──────────────────────────────────────────────────────────────
 set sv_files [glob -nocomplain -directory $source_dir *.sv]
@@ -100,7 +122,7 @@ write_checkpoint -force "$output_dir/post_synth.dcp"
 
 # Connect dbg_hub/clk before opt_design if any debug cores exist.
 if {[llength [get_debug_cores -quiet dbg_hub]] > 0} {
-  set clk_pin [lindex [get_pins -hierarchical -quiet -filter {IS_CLOCK == 1 && NAME =~ shell/dwidth_h2c/*}] 0]
+  set clk_pin [lindex [get_pins -hierarchical -quiet -filter {IS_CLOCK == 1 && NAME =~ shell/dwidth_soc/*}] 0]
   if {$clk_pin ne ""} {
     set clk_net [get_nets -of_objects $clk_pin]
     puts "INFO: connecting dbg_hub/clk to $clk_net"

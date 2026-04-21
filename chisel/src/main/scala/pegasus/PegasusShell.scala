@@ -3,56 +3,53 @@ package pegasus
 import chisel3._
 import chisel3.util.HasBlackBoxInline
 
-// PegasusShell: inline Verilog BlackBox wrapping XDMA + DDR4 + SCU.
+// PegasusShell — AU280 shell with direct DMA-to-DDR architecture.
 //
-// Architecture:
-//   XDMA M_AXI (512-bit, AXI MM DMA)  →  axi_clkconv_h2c (axi_aclk→ui_clk)
-//                                       →  axi_ic_ddr4 (2→1 mux)  →  ddr4_0
-//   chip_mem (SoC, 64-bit)             →  dwidth_soc (64→512)
-//                                       →  axi_clkconv_soc (axi_aclk→ui_clk)
-//                                       →  axi_ic_ddr4
-//   XDMA M_AXI_LITE (BAR1 AXI-Lite)   →  SCU (ctrl[0]=cpu_hold_reset)
+// All logic runs on axi_aclk (~250 MHz) from XDMA. No separate soc_clk.
 //
-// SCU register map (BAR1, offset 0):
-//   0x000  ctrl[31:0]  bit0=cpu_hold_reset  (reset=1, CPU held until driver writes 0)
+// Data path:
+//   XDMA M_AXI (512b) -> BD dwidth (512->64) -> dma_axi (64b, axi_aclk)
+//   dma_axi + chip_mem -> axi_ic_ddr4 crossbar (64b) -> dwidth_soc (64->512, async) -> DDR4 MIG
+//
+// Control path:
+//   XDMA M_AXI_LITE (32b, axi_aclk) -> SCU (cpu_hold_reset)
+//   DigitalTop mmio_axi4 (64b, axi_aclk) -> SCU (shared registers)
 //
 // Address mapping:
-//   DDR4 AXI addr 0x0 = SoC paddr 0x80000000 (DRAM base)
-//   H2C pwrite offset = SoC paddr - 0x80000000
+//   DDR4 AXI addr 0x0 == SoC paddr 0x80000000.
 class PegasusShell extends BlackBox with HasBlackBoxInline {
   val io = IO(new Bundle {
     // PCIe
-    val pcie_sys_clk    = Input(Clock())
-    val pcie_sys_clk_gt = Input(Clock())
+    val pcie_refclk_p   = Input(Bool())
+    val pcie_refclk_n   = Input(Bool())
     val pcie_sys_rst_n  = Input(Bool())
-    val pcie_exp_txp    = Output(UInt(16.W))
-    val pcie_exp_txn    = Output(UInt(16.W))
-    val pcie_exp_rxp    = Input(UInt(16.W))
-    val pcie_exp_rxn    = Input(UInt(16.W))
+    val pcie_exp_txp   = Output(UInt(16.W))
+    val pcie_exp_txn   = Output(UInt(16.W))
+    val pcie_exp_rxp   = Input(UInt(16.W))
+    val pcie_exp_rxn   = Input(UInt(16.W))
 
     // DDR4 physical pins
-    val c0_sys_clk_p   = Input(Bool())
-    val c0_sys_clk_n   = Input(Bool())
-    val c0_ddr4_act_n  = Output(Bool())
-    val c0_ddr4_adr    = Output(UInt(17.W))
-    val c0_ddr4_ba     = Output(UInt(2.W))
-    val c0_ddr4_bg     = Output(UInt(2.W))
-    val c0_ddr4_cke    = Output(UInt(1.W))
-    val c0_ddr4_odt    = Output(UInt(1.W))
-    val c0_ddr4_cs_n   = Output(UInt(1.W))
-    val c0_ddr4_ck_t   = Output(UInt(1.W))
-    val c0_ddr4_ck_c   = Output(UInt(1.W))
+    val c0_sys_clk_p    = Input(Bool())
+    val c0_sys_clk_n    = Input(Bool())
+    val c0_ddr4_act_n   = Output(Bool())
+    val c0_ddr4_adr     = Output(UInt(17.W))
+    val c0_ddr4_ba      = Output(UInt(2.W))
+    val c0_ddr4_bg      = Output(UInt(2.W))
+    val c0_ddr4_cke     = Output(UInt(1.W))
+    val c0_ddr4_odt     = Output(UInt(1.W))
+    val c0_ddr4_cs_n    = Output(UInt(1.W))
+    val c0_ddr4_ck_t    = Output(UInt(1.W))
+    val c0_ddr4_ck_c    = Output(UInt(1.W))
     val c0_ddr4_reset_n = Output(Bool())
-    val c0_ddr4_parity = Output(Bool())
+    val c0_ddr4_parity  = Output(Bool())
 
-    // SoC clock/reset (from XDMA axi_aclk / SCU)
+    // SoC clock/reset
     val dut_clk   = Output(Clock())
-    val dut_reset = Output(Bool())   // active-high: ~axi_aresetn | cpu_hold_reset
+    val dut_reset = Output(Bool())
+    val cpu_hold_reset = Output(Bool())
+    val uart_tx   = Input(Bool())
 
-    // SoC UART
-    val uart_tx = Input(Bool())
-
-    // SoC mem_axi4 → DDR4 (64-bit, 32-bit addr, matches DigitalTop mem_axi4_0)
+    // SoC mem_axi4 (64-bit, 32-bit addr, 4-bit id) → crossbar → DDR4
     val chip_mem_awid    = Input(UInt(4.W))
     val chip_mem_awaddr  = Input(UInt(32.W))
     val chip_mem_awlen   = Input(UInt(8.W))
@@ -60,18 +57,15 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
     val chip_mem_awburst = Input(UInt(2.W))
     val chip_mem_awvalid = Input(Bool())
     val chip_mem_awready = Output(Bool())
-
     val chip_mem_wdata  = Input(UInt(64.W))
     val chip_mem_wstrb  = Input(UInt(8.W))
     val chip_mem_wlast  = Input(Bool())
     val chip_mem_wvalid = Input(Bool())
     val chip_mem_wready = Output(Bool())
-
     val chip_mem_bid    = Output(UInt(4.W))
     val chip_mem_bresp  = Output(UInt(2.W))
     val chip_mem_bvalid = Output(Bool())
     val chip_mem_bready = Input(Bool())
-
     val chip_mem_arid    = Input(UInt(4.W))
     val chip_mem_araddr  = Input(UInt(32.W))
     val chip_mem_arlen   = Input(UInt(8.W))
@@ -79,19 +73,49 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
     val chip_mem_arburst = Input(UInt(2.W))
     val chip_mem_arvalid = Input(Bool())
     val chip_mem_arready = Output(Bool())
-
     val chip_mem_rid    = Output(UInt(4.W))
     val chip_mem_rdata  = Output(UInt(64.W))
     val chip_mem_rresp  = Output(UInt(2.W))
     val chip_mem_rlast  = Output(Bool())
     val chip_mem_rvalid = Output(Bool())
     val chip_mem_rready = Input(Bool())
+
+    // MMIO AXI4 from DigitalTop → SCU
+    val mmio_awid    = Input(UInt(4.W))
+    val mmio_awaddr  = Input(UInt(32.W))
+    val mmio_awlen   = Input(UInt(8.W))
+    val mmio_awsize  = Input(UInt(3.W))
+    val mmio_awburst = Input(UInt(2.W))
+    val mmio_awvalid = Input(Bool())
+    val mmio_awready = Output(Bool())
+    val mmio_wdata  = Input(UInt(64.W))
+    val mmio_wstrb  = Input(UInt(8.W))
+    val mmio_wlast  = Input(Bool())
+    val mmio_wvalid = Input(Bool())
+    val mmio_wready = Output(Bool())
+    val mmio_bid    = Output(UInt(4.W))
+    val mmio_bresp  = Output(UInt(2.W))
+    val mmio_bvalid = Output(Bool())
+    val mmio_bready = Input(Bool())
+    val mmio_arid    = Input(UInt(4.W))
+    val mmio_araddr  = Input(UInt(32.W))
+    val mmio_arlen   = Input(UInt(8.W))
+    val mmio_arsize  = Input(UInt(3.W))
+    val mmio_arburst = Input(UInt(2.W))
+    val mmio_arvalid = Input(Bool())
+    val mmio_arready = Output(Bool())
+    val mmio_rid    = Output(UInt(4.W))
+    val mmio_rdata  = Output(UInt(64.W))
+    val mmio_rresp  = Output(UInt(2.W))
+    val mmio_rlast  = Output(Bool())
+    val mmio_rvalid = Output(Bool())
+    val mmio_rready = Input(Bool())
   })
 
   setInline("PegasusShell.v",
     """module PegasusShell (
-      |  input         pcie_sys_clk,
-      |  input         pcie_sys_clk_gt,
+      |  input         pcie_refclk_p,
+      |  input         pcie_refclk_n,
       |  input         pcie_sys_rst_n,
       |  output [15:0] pcie_exp_txp,
       |  output [15:0] pcie_exp_txn,
@@ -115,215 +139,156 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |  inout  [17:0] c0_ddr4_dqs_t,
       |  output        dut_clk,
       |  output        dut_reset,
+      |  output        cpu_hold_reset,
       |  input         uart_tx,
-      |  input  [3:0]   chip_mem_awid,
-      |  input  [31:0]  chip_mem_awaddr,
-      |  input  [7:0]   chip_mem_awlen,
-      |  input  [2:0]   chip_mem_awsize,
-      |  input  [1:0]   chip_mem_awburst,
-      |  input          chip_mem_awvalid,
+      |  // SoC mem_axi4 → crossbar → DDR4
+      |  input  [3:0]   chip_mem_awid,    input  [31:0] chip_mem_awaddr,
+      |  input  [7:0]   chip_mem_awlen,   input  [2:0]  chip_mem_awsize,
+      |  input  [1:0]   chip_mem_awburst, input         chip_mem_awvalid,
       |  output         chip_mem_awready,
-      |  input  [63:0]  chip_mem_wdata,
-      |  input  [7:0]   chip_mem_wstrb,
-      |  input          chip_mem_wlast,
-      |  input          chip_mem_wvalid,
+      |  input  [63:0]  chip_mem_wdata,   input  [7:0]  chip_mem_wstrb,
+      |  input          chip_mem_wlast,   input         chip_mem_wvalid,
       |  output         chip_mem_wready,
-      |  output [3:0]   chip_mem_bid,
-      |  output [1:0]   chip_mem_bresp,
-      |  output         chip_mem_bvalid,
-      |  input          chip_mem_bready,
-      |  input  [3:0]   chip_mem_arid,
-      |  input  [31:0]  chip_mem_araddr,
-      |  input  [7:0]   chip_mem_arlen,
-      |  input  [2:0]   chip_mem_arsize,
-      |  input  [1:0]   chip_mem_arburst,
-      |  input          chip_mem_arvalid,
+      |  output [3:0]   chip_mem_bid,     output [1:0]  chip_mem_bresp,
+      |  output         chip_mem_bvalid,  input         chip_mem_bready,
+      |  input  [3:0]   chip_mem_arid,    input  [31:0] chip_mem_araddr,
+      |  input  [7:0]   chip_mem_arlen,   input  [2:0]  chip_mem_arsize,
+      |  input  [1:0]   chip_mem_arburst, input         chip_mem_arvalid,
       |  output         chip_mem_arready,
-      |  output [3:0]   chip_mem_rid,
-      |  output [63:0]  chip_mem_rdata,
-      |  output [1:0]   chip_mem_rresp,
-      |  output         chip_mem_rlast,
-      |  output         chip_mem_rvalid,
-      |  input          chip_mem_rready
+      |  output [3:0]   chip_mem_rid,     output [63:0] chip_mem_rdata,
+      |  output [1:0]   chip_mem_rresp,   output        chip_mem_rlast,
+      |  output         chip_mem_rvalid,  input         chip_mem_rready,
+      |  // MMIO AXI4 → SCU
+      |  input  [3:0]   mmio_awid,    input  [31:0] mmio_awaddr,
+      |  input  [7:0]   mmio_awlen,   input  [2:0]  mmio_awsize,
+      |  input  [1:0]   mmio_awburst, input         mmio_awvalid,
+      |  output         mmio_awready,
+      |  input  [63:0]  mmio_wdata,   input  [7:0]  mmio_wstrb,
+      |  input          mmio_wlast,   input         mmio_wvalid,
+      |  output         mmio_wready,
+      |  output [3:0]   mmio_bid,     output [1:0]  mmio_bresp,
+      |  output         mmio_bvalid,  input         mmio_bready,
+      |  input  [3:0]   mmio_arid,    input  [31:0] mmio_araddr,
+      |  input  [7:0]   mmio_arlen,   input  [2:0]  mmio_arsize,
+      |  input  [1:0]   mmio_arburst, input         mmio_arvalid,
+      |  output         mmio_arready,
+      |  output [3:0]   mmio_rid,     output [63:0] mmio_rdata,
+      |  output [1:0]   mmio_rresp,   output        mmio_rlast,
+      |  output         mmio_rvalid,  input         mmio_rready
       |);
       |
+      |  // ── Clocks & resets ───────────────────────────────────────────────
       |  wire axi_aclk;
       |  wire axi_aresetn;
-      |  wire pcie_sys_clk_gt_buf;
-      |  wire ddr4_ui_clk;
-      |  wire ddr4_ui_clk_sync_rst;
-      |  wire ddr4_aresetn;
-      |  assign ddr4_aresetn = ~ddr4_ui_clk_sync_rst;
+      |  wire ui_clk;
+      |  wire ui_clk_sync_rst;
+      |  wire ui_aresetn = ~ui_clk_sync_rst;
+      |  wire resetn     = pcie_sys_rst_n;
+      |  wire ddr4_sys_rst = ~resetn;
       |
-      |  // ── XDMA M_AXI wires (512-bit, AXI MM DMA) ───────────────────────
-      |  wire [3:0]   xdma_awid;
-      |  wire [33:0]  xdma_awaddr;
-      |  wire [7:0]   xdma_awlen;
-      |  wire [2:0]   xdma_awsize;
-      |  wire [1:0]   xdma_awburst;
-      |  wire         xdma_awvalid, xdma_awready;
-      |  wire [511:0] xdma_wdata;
-      |  wire [63:0]  xdma_wstrb;
-      |  wire         xdma_wlast, xdma_wvalid, xdma_wready;
-      |  wire [3:0]   xdma_bid;
-      |  wire [1:0]   xdma_bresp;
-      |  wire         xdma_bvalid, xdma_bready;
-      |  wire [3:0]   xdma_arid;
-      |  wire [33:0]  xdma_araddr;
-      |  wire [7:0]   xdma_arlen;
-      |  wire [2:0]   xdma_arsize;
-      |  wire [1:0]   xdma_arburst;
-      |  wire         xdma_arvalid, xdma_arready;
-      |  wire [3:0]   xdma_rid;
-      |  wire [511:0] xdma_rdata;
-      |  wire [1:0]   xdma_rresp;
-      |  wire         xdma_rlast, xdma_rvalid, xdma_rready;
+      |  // DUT runs on axi_aclk (unified clock domain)
+      |  assign dut_clk   = axi_aclk;
+      |  assign dut_reset = ~axi_aresetn;
       |
-      |  // ── XDMA M_AXI_LITE wires (SCU) ──────────────────────────────────
-      |  wire [31:0] axil_awaddr;
-      |  wire [2:0]  axil_awprot;
+      |  // ── XDMA BD wrapper wires ─────────────────────────────────────────
+      |  // dma_axi: 64-bit AXI from XDMA (after 512→64 dwidth in BD), axi_aclk
+      |  // Note: dwidth_h2c strips ID signals; BD wrapper has no awid/bid/arid/rid.
+      |  wire [63:0] dma_awaddr;  wire [7:0]  dma_awlen;
+      |  wire [2:0]  dma_awsize;  wire [1:0]  dma_awburst;
+      |  wire        dma_awlock;  wire [3:0]  dma_awcache;
+      |  wire [2:0]  dma_awprot;  wire [3:0]  dma_awqos;  wire [3:0] dma_awregion;
+      |  wire        dma_awvalid, dma_awready;
+      |  wire [63:0] dma_wdata;   wire [7:0]  dma_wstrb;
+      |  wire        dma_wlast,   dma_wvalid, dma_wready;
+      |  wire [1:0]  dma_bresp;   wire        dma_bvalid, dma_bready;
+      |  wire [63:0] dma_araddr;  wire [7:0]  dma_arlen;
+      |  wire [2:0]  dma_arsize;  wire [1:0]  dma_arburst;
+      |  wire        dma_arlock;  wire [3:0]  dma_arcache;
+      |  wire [2:0]  dma_arprot;  wire [3:0]  dma_arqos;  wire [3:0] dma_arregion;
+      |  wire        dma_arvalid, dma_arready;
+      |  wire [63:0] dma_rdata;   wire [1:0]  dma_rresp;
+      |  wire        dma_rlast,   dma_rvalid, dma_rready;
+      |
+      |  // AXI-Lite from XDMA → SCU
+      |  wire [31:0] axil_awaddr; wire [2:0] axil_awprot;
       |  wire        axil_awvalid, axil_awready;
-      |  wire [31:0] axil_wdata;
-      |  wire [3:0]  axil_wstrb;
+      |  wire [31:0] axil_wdata;  wire [3:0] axil_wstrb;
       |  wire        axil_wvalid, axil_wready;
-      |  wire        axil_bvalid;
-      |  wire [1:0]  axil_bresp;
-      |  wire        axil_bready;
-      |  wire [31:0] axil_araddr;
-      |  wire [2:0]  axil_arprot;
+      |  wire        axil_bvalid; wire [1:0] axil_bresp; wire axil_bready;
+      |  wire [31:0] axil_araddr; wire [2:0] axil_arprot;
       |  wire        axil_arvalid, axil_arready;
-      |  wire [31:0] axil_rdata;
-      |  wire [1:0]  axil_rresp;
+      |  wire [31:0] axil_rdata;  wire [1:0] axil_rresp;
       |  wire        axil_rvalid, axil_rready;
       |
-      |  // ── H2C pipeline master (512-bit) ──────────────────────────────────
-      |  wire [33:0]  dh_awaddr;
-      |  wire [7:0]   dh_awlen;
-      |  wire [2:0]   dh_awsize;
-      |  wire [1:0]   dh_awburst;
-      |  wire         dh_awvalid, dh_awready;
-      |  wire [511:0] dh_wdata;
-      |  wire [63:0]  dh_wstrb;
-      |  wire         dh_wlast, dh_wvalid, dh_wready;
-      |  wire [1:0]   dh_bresp;
-      |  wire         dh_bvalid, dh_bready;
-      |  wire [33:0]  dh_araddr;
-      |  wire [7:0]   dh_arlen;
-      |  wire [2:0]   dh_arsize;
-      |  wire [1:0]   dh_arburst;
-      |  wire         dh_arvalid, dh_arready;
-      |  wire [511:0] dh_rdata;
-      |  wire [1:0]   dh_rresp;
-      |  wire         dh_rlast, dh_rvalid, dh_rready;
-      |
-      |  // ── dwidth_soc master (512-bit) ───────────────────────────────────
-      |  wire [33:0]  ds_awaddr;
-      |  wire [7:0]   ds_awlen;
-      |  wire [2:0]   ds_awsize;
-      |  wire [1:0]   ds_awburst;
-      |  wire         ds_awvalid, ds_awready;
-      |  wire [511:0] ds_wdata;
-      |  wire [63:0]  ds_wstrb;
-      |  wire         ds_wlast, ds_wvalid, ds_wready;
-      |  wire [3:0]   ds_bid;
-      |  wire [1:0]   ds_bresp;
-      |  wire         ds_bvalid, ds_bready;
-      |  wire [33:0]  ds_araddr;
-      |  wire [7:0]   ds_arlen;
-      |  wire [2:0]   ds_arsize;
-      |  wire [1:0]   ds_arburst;
-      |  wire         ds_arvalid, ds_arready;
-      |  wire [3:0]   ds_rid;
-      |  wire [511:0] ds_rdata;
-      |  wire [1:0]   ds_rresp;
-      |  wire         ds_rlast, ds_rvalid, ds_rready;
-      |
-      |  // ── axi_clkconv_h2c master (ui_clk domain, 512-bit) ──────────────
-      |  wire [33:0]  ch_awaddr; wire [7:0] ch_awlen; wire [2:0] ch_awsize;
-      |  wire [1:0]   ch_awburst; wire ch_awvalid, ch_awready;
-      |  wire [511:0] ch_wdata; wire [63:0] ch_wstrb;
-      |  wire         ch_wlast, ch_wvalid, ch_wready;
-      |  wire [1:0]   ch_bresp; wire ch_bvalid, ch_bready;
-      |  wire [33:0]  ch_araddr; wire [7:0] ch_arlen; wire [2:0] ch_arsize;
-      |  wire [1:0]   ch_arburst; wire ch_arvalid, ch_arready;
-      |  wire [511:0] ch_rdata; wire [1:0] ch_rresp;
-      |  wire         ch_rlast, ch_rvalid, ch_rready;
-      |
-      |  // ── axi_clkconv_soc master (ui_clk domain, 512-bit) ──────────────
-      |  wire [33:0]  cs_awaddr; wire [7:0] cs_awlen; wire [2:0] cs_awsize;
-      |  wire [1:0]   cs_awburst; wire cs_awvalid, cs_awready;
-      |  wire [511:0] cs_wdata; wire [63:0] cs_wstrb;
-      |  wire         cs_wlast, cs_wvalid, cs_wready;
-      |  wire [3:0]   cs_bid; wire [1:0] cs_bresp; wire cs_bvalid, cs_bready;
-      |  wire [33:0]  cs_araddr; wire [7:0] cs_arlen; wire [2:0] cs_arsize;
-      |  wire [1:0]   cs_arburst; wire cs_arvalid, cs_arready;
-      |  wire [3:0]   cs_rid; wire [511:0] cs_rdata; wire [1:0] cs_rresp;
-      |  wire         cs_rlast, cs_rvalid, cs_rready;
-      |
-      |  // ── ic master -> DDR4 (512-bit, ui_clk) ──────────────────────────
-      |  wire [33:0]  ic_awaddr; wire [7:0] ic_awlen; wire [2:0] ic_awsize;
-      |  wire [1:0]   ic_awburst; wire ic_awvalid, ic_awready;
-      |  wire [511:0] ic_wdata; wire [63:0] ic_wstrb;
-      |  wire         ic_wlast, ic_wvalid, ic_wready;
-      |  wire [1:0]   ic_bresp; wire ic_bvalid, ic_bready;
-      |  wire [33:0]  ic_araddr; wire [7:0] ic_arlen; wire [2:0] ic_arsize;
-      |  wire [1:0]   ic_arburst; wire ic_arvalid, ic_arready;
-      |  wire [511:0] ic_rdata; wire [1:0] ic_rresp;
-      |  wire         ic_rlast, ic_rvalid, ic_rready;
-      |
-      |  wire cpu_hold_reset;
-      |
-      |  // ── IBUFDS_GTE4 ──────────────────────────────────────────────────
-      |  IBUFDS_GTE4 #(
-      |    .REFCLK_EN_TX_PATH(1'b0), .REFCLK_HROW_CK_SEL(2'b00), .REFCLK_ICNTL_RX(2'b00)
-      |  ) ibufds_gt_clk (
-      |    .I(pcie_sys_clk_gt), .IB(1'b0), .CEB(1'b0), .O(pcie_sys_clk_gt_buf), .ODIV2()
+      |  // ── XDMA BD instantiation ─────────────────────────────────────────
+      |  pegasus_xdma_bd_wrapper xdma_subsys (
+      |    .pcie_refclk_clk_p (pcie_refclk_p),
+      |    .pcie_refclk_clk_n (pcie_refclk_n),
+      |    .pcie_sys_rst_n   (pcie_sys_rst_n),
+      |    .axi_aclk         (axi_aclk),
+      |    .axi_aresetn      (axi_aresetn),
+      |    .pcie_mgt_txn     (pcie_exp_txn),
+      |    .pcie_mgt_txp     (pcie_exp_txp),
+      |    .pcie_mgt_rxn     (pcie_exp_rxn),
+      |    .pcie_mgt_rxp     (pcie_exp_rxp),
+      |    // dma_axi: 64-bit AXI (no ID signals from dwidth_h2c)
+      |    .dma_axi_awaddr   (dma_awaddr),
+      |    .dma_axi_awlen    (dma_awlen),
+      |    .dma_axi_awsize   (dma_awsize),
+      |    .dma_axi_awburst  (dma_awburst),
+      |    .dma_axi_awlock   (dma_awlock),
+      |    .dma_axi_awcache  (dma_awcache),
+      |    .dma_axi_awprot   (dma_awprot),
+      |    .dma_axi_awqos    (dma_awqos),
+      |    .dma_axi_awregion (dma_awregion),
+      |    .dma_axi_awvalid  (dma_awvalid),
+      |    .dma_axi_awready  (dma_awready),
+      |    .dma_axi_wdata    (dma_wdata),
+      |    .dma_axi_wstrb    (dma_wstrb),
+      |    .dma_axi_wlast    (dma_wlast),
+      |    .dma_axi_wvalid   (dma_wvalid),
+      |    .dma_axi_wready   (dma_wready),
+      |    .dma_axi_bresp    (dma_bresp),
+      |    .dma_axi_bvalid   (dma_bvalid),
+      |    .dma_axi_bready   (dma_bready),
+      |    .dma_axi_araddr   (dma_araddr),
+      |    .dma_axi_arlen    (dma_arlen),
+      |    .dma_axi_arsize   (dma_arsize),
+      |    .dma_axi_arburst  (dma_arburst),
+      |    .dma_axi_arlock   (dma_arlock),
+      |    .dma_axi_arcache  (dma_arcache),
+      |    .dma_axi_arprot   (dma_arprot),
+      |    .dma_axi_arqos    (dma_arqos),
+      |    .dma_axi_arregion (dma_arregion),
+      |    .dma_axi_arvalid  (dma_arvalid),
+      |    .dma_axi_arready  (dma_arready),
+      |    .dma_axi_rdata    (dma_rdata),
+      |    .dma_axi_rresp    (dma_rresp),
+      |    .dma_axi_rlast    (dma_rlast),
+      |    .dma_axi_rvalid   (dma_rvalid),
+      |    .dma_axi_rready   (dma_rready),
+      |    .dma_axil_awaddr  (axil_awaddr),
+      |    .dma_axil_awprot  (axil_awprot),
+      |    .dma_axil_awvalid (axil_awvalid),
+      |    .dma_axil_awready (axil_awready),
+      |    .dma_axil_wdata   (axil_wdata),
+      |    .dma_axil_wstrb   (axil_wstrb),
+      |    .dma_axil_wvalid  (axil_wvalid),
+      |    .dma_axil_wready  (axil_wready),
+      |    .dma_axil_bresp   (axil_bresp),
+      |    .dma_axil_bvalid  (axil_bvalid),
+      |    .dma_axil_bready  (axil_bready),
+      |    .dma_axil_araddr  (axil_araddr),
+      |    .dma_axil_arprot  (axil_arprot),
+      |    .dma_axil_arvalid (axil_arvalid),
+      |    .dma_axil_arready (axil_arready),
+      |    .dma_axil_rdata   (axil_rdata),
+      |    .dma_axil_rresp   (axil_rresp),
+      |    .dma_axil_rvalid  (axil_rvalid),
+      |    .dma_axil_rready  (axil_rready)
       |  );
       |
-      |  // ── XDMA (AXI Memory Mapped DMA mode) ────────────────────────────
-      |  xdma_0 xdma (
-      |    .sys_clk(pcie_sys_clk), .sys_clk_gt(pcie_sys_clk_gt_buf),
-      |    .sys_rst_n(pcie_sys_rst_n),
-      |    .pci_exp_txp(pcie_exp_txp), .pci_exp_txn(pcie_exp_txn),
-      |    .pci_exp_rxp(pcie_exp_rxp), .pci_exp_rxn(pcie_exp_rxn),
-      |    .axi_aclk(axi_aclk), .axi_aresetn(axi_aresetn),
-      |    .usr_irq_req(4'h0),
-      |    // M_AXI — DMA host-to-card / card-to-host
-      |    .m_axi_awid(xdma_awid),       .m_axi_awaddr(xdma_awaddr),
-      |    .m_axi_awlen(xdma_awlen),     .m_axi_awsize(xdma_awsize),
-      |    .m_axi_awburst(xdma_awburst), .m_axi_awprot(3'h0),
-      |    .m_axi_awvalid(xdma_awvalid), .m_axi_awready(xdma_awready),
-      |    .m_axi_awlock(1'b0),          .m_axi_awcache(4'h0),
-      |    .m_axi_wdata(xdma_wdata),     .m_axi_wstrb(xdma_wstrb),
-      |    .m_axi_wlast(xdma_wlast),     .m_axi_wvalid(xdma_wvalid),
-      |    .m_axi_wready(xdma_wready),
-      |    .m_axi_bid(xdma_bid),         .m_axi_bresp(xdma_bresp),
-      |    .m_axi_bvalid(xdma_bvalid),   .m_axi_bready(xdma_bready),
-      |    .m_axi_arid(xdma_arid),       .m_axi_araddr(xdma_araddr),
-      |    .m_axi_arlen(xdma_arlen),     .m_axi_arsize(xdma_arsize),
-      |    .m_axi_arburst(xdma_arburst), .m_axi_arprot(3'h0),
-      |    .m_axi_arvalid(xdma_arvalid), .m_axi_arready(xdma_arready),
-      |    .m_axi_arlock(1'b0),          .m_axi_arcache(4'h0),
-      |    .m_axi_rid(xdma_rid),         .m_axi_rdata(xdma_rdata),
-      |    .m_axi_rresp(xdma_rresp),     .m_axi_rlast(xdma_rlast),
-      |    .m_axi_rvalid(xdma_rvalid),   .m_axi_rready(xdma_rready),
-      |    // M_AXI_LITE — SCU
-      |    .m_axil_awaddr(axil_awaddr),   .m_axil_awprot(axil_awprot),
-      |    .m_axil_awvalid(axil_awvalid), .m_axil_awready(axil_awready),
-      |    .m_axil_wdata(axil_wdata),     .m_axil_wstrb(axil_wstrb),
-      |    .m_axil_wvalid(axil_wvalid),   .m_axil_wready(axil_wready),
-      |    .m_axil_bvalid(axil_bvalid),   .m_axil_bresp(axil_bresp),
-      |    .m_axil_bready(axil_bready),
-      |    .m_axil_araddr(axil_araddr),   .m_axil_arprot(axil_arprot),
-      |    .m_axil_arvalid(axil_arvalid), .m_axil_arready(axil_arready),
-      |    .m_axil_rdata(axil_rdata),     .m_axil_rresp(axil_rresp),
-      |    .m_axil_rvalid(axil_rvalid),   .m_axil_rready(axil_rready)
-      |  );
-      |
-      |  assign dut_clk   = axi_aclk;
-      |  assign dut_reset = ~axi_aresetn | cpu_hold_reset;
-      |
-      |  // ── SCU — AXI-Lite slave ──────────────────────────────────────────
+      |  // ── SCU (AXI-Lite slave from XDMA, axi_aclk domain) ──────────────
       |  reg [31:0] scu_ctrl;
       |  reg        scu_aw_pend, scu_bvalid_r, scu_rvalid_r;
       |  reg [31:0] scu_rdata_r;
@@ -349,292 +314,346 @@ class PegasusShell extends BlackBox with HasBlackBoxInline {
       |      if (scu_rvalid_r && axil_rready) scu_rvalid_r <= 1'b0;
       |    end
       |  end
-      |  assign axil_awready = ~scu_aw_pend & ~scu_bvalid_r;
-      |  assign axil_wready  = 1'b1;
-      |  assign axil_bvalid  = scu_bvalid_r;
-      |  assign axil_bresp   = 2'b00;
-      |  assign axil_arready = ~scu_rvalid_r;
-      |  assign axil_rdata   = scu_rdata_r;
-      |  assign axil_rresp   = 2'b00;
-      |  assign axil_rvalid  = scu_rvalid_r;
+      |  assign axil_awready  = ~scu_aw_pend & ~scu_bvalid_r;
+      |  assign axil_wready   = 1'b1;
+      |  assign axil_bvalid   = scu_bvalid_r;
+      |  assign axil_bresp    = 2'b00;
+      |  assign axil_arready  = ~scu_rvalid_r;
+      |  assign axil_rdata    = scu_rdata_r;
+      |  assign axil_rresp    = 2'b00;
+      |  assign axil_rvalid   = scu_rvalid_r;
       |  assign cpu_hold_reset = scu_ctrl[0];
       |
-      |  // ── H2C: XDMA 512-bit (direct) ─────────────────────────────────────
-      |  assign dh_awaddr  = xdma_awaddr;
-      |  assign dh_awlen   = xdma_awlen;
-      |  assign dh_awsize  = xdma_awsize;
-      |  assign dh_awburst = xdma_awburst;
-      |  assign dh_awvalid = xdma_awvalid;
-      |  assign xdma_awready = dh_awready;
-      |  assign dh_wdata   = xdma_wdata;
-      |  assign dh_wstrb   = xdma_wstrb;
-      |  assign dh_wlast   = xdma_wlast;
-      |  assign dh_wvalid  = xdma_wvalid;
-      |  assign xdma_wready = dh_wready;
-      |  assign xdma_bid   = 4'h0;
-      |  assign xdma_bresp = dh_bresp;
-      |  assign xdma_bvalid = dh_bvalid;
-      |  assign dh_bready  = xdma_bready;
-      |  assign dh_araddr  = xdma_araddr;
-      |  assign dh_arlen   = xdma_arlen;
-      |  assign dh_arsize  = xdma_arsize;
-      |  assign dh_arburst = xdma_arburst;
-      |  assign dh_arvalid = xdma_arvalid;
-      |  assign xdma_arready = dh_arready;
-      |  assign xdma_rid   = 4'h0;
-      |  assign xdma_rdata = dh_rdata;
-      |  assign xdma_rresp = dh_rresp;
-      |  assign xdma_rlast = dh_rlast;
-      |  assign xdma_rvalid = dh_rvalid;
-      |  assign dh_rready  = xdma_rready;
+      |  // ── MMIO peripheral (AXI4 slave from DigitalTop, axi_aclk domain) ─
+      |  // Serves DigitalTop MMIO requests (UART, sim_exit, etc.).
+      |  // Address map (relative to MMIO base):
+      |  //   0x00: UART TX data (write: send byte, read: 0)
+      |  //   0x08: sim_exit     (write: trigger exit, read: 0)
+      |  // For now: accept all writes (discard), reads return 0.
+      |  reg        mmio_aw_pend;
+      |  reg [3:0]  mmio_bid_r, mmio_rid_r;
+      |  reg        mmio_bvalid_r, mmio_rvalid_r;
       |
-      |  // ── SoC: chip_mem 64-bit -> dwidth_soc 64->512 ────────────────────
-      |  axi_dwidth_converter_soc dwidth_soc (
-      |    .s_axi_aclk(axi_aclk), .s_axi_aresetn(axi_aresetn),
-      |    .s_axi_awid(chip_mem_awid),       .s_axi_awaddr({2'b0, chip_mem_awaddr}),
-      |    .s_axi_awlen(chip_mem_awlen),     .s_axi_awsize(chip_mem_awsize),
-      |    .s_axi_awburst(chip_mem_awburst), .s_axi_awlock(1'b0),
-      |    .s_axi_awcache(4'h0),             .s_axi_awprot(3'h0),
-      |    .s_axi_awregion(4'h0),            .s_axi_awqos(4'h0),
-      |    .s_axi_awvalid(chip_mem_awvalid), .s_axi_awready(chip_mem_awready),
-      |    .s_axi_wdata(chip_mem_wdata),     .s_axi_wstrb(chip_mem_wstrb),
-      |    .s_axi_wlast(chip_mem_wlast),     .s_axi_wvalid(chip_mem_wvalid),
-      |    .s_axi_wready(chip_mem_wready),
-      |    .s_axi_bid(chip_mem_bid),         .s_axi_bresp(chip_mem_bresp),
-      |    .s_axi_bvalid(chip_mem_bvalid),   .s_axi_bready(chip_mem_bready),
-      |    .s_axi_arid(chip_mem_arid),       .s_axi_araddr({2'b0, chip_mem_araddr}),
-      |    .s_axi_arlen(chip_mem_arlen),     .s_axi_arsize(chip_mem_arsize),
-      |    .s_axi_arburst(chip_mem_arburst), .s_axi_arlock(1'b0),
-      |    .s_axi_arcache(4'h0),             .s_axi_arprot(3'h0),
-      |    .s_axi_arregion(4'h0),            .s_axi_arqos(4'h0),
-      |    .s_axi_arvalid(chip_mem_arvalid), .s_axi_arready(chip_mem_arready),
-      |    .s_axi_rid(chip_mem_rid),         .s_axi_rdata(chip_mem_rdata),
-      |    .s_axi_rresp(chip_mem_rresp),     .s_axi_rlast(chip_mem_rlast),
-      |    .s_axi_rvalid(chip_mem_rvalid),   .s_axi_rready(chip_mem_rready),
-      |    .m_axi_awaddr(ds_awaddr),         .m_axi_awlen(ds_awlen),
-      |    .m_axi_awsize(ds_awsize),         .m_axi_awburst(ds_awburst),
-      |    .m_axi_awlock(), .m_axi_awcache(), .m_axi_awprot(),
-      |    .m_axi_awregion(), .m_axi_awqos(),
-      |    .m_axi_awvalid(ds_awvalid),       .m_axi_awready(ds_awready),
-      |    .m_axi_wdata(ds_wdata),           .m_axi_wstrb(ds_wstrb),
-      |    .m_axi_wlast(ds_wlast),           .m_axi_wvalid(ds_wvalid),
-      |    .m_axi_wready(ds_wready),
-      |    .m_axi_bresp(ds_bresp),           .m_axi_bvalid(ds_bvalid),
-      |    .m_axi_bready(ds_bready),
-      |    .m_axi_araddr(ds_araddr),         .m_axi_arlen(ds_arlen),
-      |    .m_axi_arsize(ds_arsize),         .m_axi_arburst(ds_arburst),
-      |    .m_axi_arlock(), .m_axi_arcache(), .m_axi_arprot(),
-      |    .m_axi_arregion(), .m_axi_arqos(),
-      |    .m_axi_arvalid(ds_arvalid),       .m_axi_arready(ds_arready),
-      |    .m_axi_rdata(ds_rdata),           .m_axi_rresp(ds_rresp),
-      |    .m_axi_rlast(ds_rlast),           .m_axi_rvalid(ds_rvalid),
-      |    .m_axi_rready(ds_rready)
+      |  always @(posedge axi_aclk or negedge axi_aresetn) begin
+      |    if (!axi_aresetn) begin
+      |      mmio_aw_pend  <= 1'b0;
+      |      mmio_bvalid_r <= 1'b0;
+      |      mmio_rvalid_r <= 1'b0;
+      |    end else begin
+      |      if (mmio_awvalid && mmio_awready) begin
+      |        mmio_aw_pend <= 1'b1;
+      |        mmio_bid_r   <= mmio_awid;
+      |      end
+      |      if ((mmio_aw_pend || (mmio_awvalid && mmio_awready)) && mmio_wvalid && mmio_wlast) begin
+      |        mmio_aw_pend  <= 1'b0;
+      |        mmio_bvalid_r <= 1'b1;
+      |      end
+      |      if (mmio_bvalid_r && mmio_bready) mmio_bvalid_r <= 1'b0;
+      |      if (mmio_arvalid && mmio_arready) begin
+      |        mmio_rid_r    <= mmio_arid;
+      |        mmio_rvalid_r <= 1'b1;
+      |      end
+      |      if (mmio_rvalid_r && mmio_rready) mmio_rvalid_r <= 1'b0;
+      |    end
+      |  end
+      |  assign mmio_awready = ~mmio_aw_pend & ~mmio_bvalid_r;
+      |  assign mmio_wready  = 1'b1;
+      |  assign mmio_bid     = mmio_bid_r;
+      |  assign mmio_bresp   = 2'b00;
+      |  assign mmio_bvalid  = mmio_bvalid_r;
+      |  assign mmio_arready = ~mmio_rvalid_r;
+      |  assign mmio_rid     = mmio_rid_r;
+      |  assign mmio_rdata   = 64'h0;
+      |  assign mmio_rresp   = 2'b00;
+      |  assign mmio_rlast   = 1'b1;
+      |  assign mmio_rvalid  = mmio_rvalid_r;
+      |
+      |  // ── AXI Crossbar: 2 slaves → 1 master (DDR4 path) ────────────────
+      |  // S0: XDMA DMA (64b, axi_aclk)  — no ID from BD dwidth, tie to 0
+      |  // S1: DigitalTop mem_axi4 (64b, axi_aclk)
+      |  // M0: → dwidth_soc (64→512) → DDR4 MIG
+      |  // axi_crossbar standalone IP uses concatenated vector ports:
+      |  //   s_axi_awaddr = {s1_addr, s0_addr}, etc.
+      |  wire [3:0]  xbar_m_awid;    wire [31:0] xbar_m_awaddr;
+      |  wire [7:0]  xbar_m_awlen;   wire [2:0]  xbar_m_awsize;
+      |  wire [1:0]  xbar_m_awburst; wire        xbar_m_awlock;
+      |  wire [3:0]  xbar_m_awcache; wire [2:0]  xbar_m_awprot;
+      |  wire [3:0]  xbar_m_awregion; wire [3:0] xbar_m_awqos;
+      |  wire        xbar_m_awvalid, xbar_m_awready;
+      |  wire [63:0] xbar_m_wdata;   wire [7:0]  xbar_m_wstrb;
+      |  wire        xbar_m_wlast,   xbar_m_wvalid, xbar_m_wready;
+      |  wire [3:0]  xbar_m_bid;     wire [1:0]  xbar_m_bresp;
+      |  wire        xbar_m_bvalid,  xbar_m_bready;
+      |  wire [3:0]  xbar_m_arid;    wire [31:0] xbar_m_araddr;
+      |  wire [7:0]  xbar_m_arlen;   wire [2:0]  xbar_m_arsize;
+      |  wire [1:0]  xbar_m_arburst; wire        xbar_m_arlock;
+      |  wire [3:0]  xbar_m_arcache; wire [2:0]  xbar_m_arprot;
+      |  wire [3:0]  xbar_m_arregion; wire [3:0] xbar_m_arqos;
+      |  wire        xbar_m_arvalid, xbar_m_arready;
+      |  wire [63:0] xbar_m_rdata;   wire [1:0]  xbar_m_rresp;
+      |  wire        xbar_m_rlast,   xbar_m_rvalid, xbar_m_rready;
+      |  wire [3:0]  xbar_m_rid;
+      |
+      |  // Crossbar slave-side response wires (concatenated, split per-slave)
+      |  wire [7:0]  xbar_s_bid;     wire [3:0]  xbar_s_bresp;
+      |  wire [1:0]  xbar_s_bvalid;  wire [1:0]  xbar_s_awready;
+      |  wire [1:0]  xbar_s_wready;
+      |  wire [7:0]  xbar_s_rid;     wire [127:0] xbar_s_rdata;
+      |  wire [3:0]  xbar_s_rresp;   wire [1:0]  xbar_s_rlast;
+      |  wire [1:0]  xbar_s_rvalid;  wire [1:0]  xbar_s_arready;
+      |
+      |  axi_ic_ddr4 xbar (
+      |    .aclk           (axi_aclk),
+      |    .aresetn        (axi_aresetn),
+      |    // Slave ports (concatenated: {S1, S0})
+      |    .s_axi_awid     ({chip_mem_awid,    4'h0}),
+      |    .s_axi_awaddr   ({chip_mem_awaddr,  dma_awaddr[31:0]}),
+      |    .s_axi_awlen    ({chip_mem_awlen,   dma_awlen}),
+      |    .s_axi_awsize   ({chip_mem_awsize,  dma_awsize}),
+      |    .s_axi_awburst  ({chip_mem_awburst, dma_awburst}),
+      |    .s_axi_awlock   ({1'b0,             dma_awlock}),
+      |    .s_axi_awcache  ({4'h0,             dma_awcache}),
+      |    .s_axi_awprot   ({3'h0,             dma_awprot}),
+      |    .s_axi_awqos    ({4'h0,             dma_awqos}),
+      |    .s_axi_awvalid  ({chip_mem_awvalid, dma_awvalid}),
+      |    .s_axi_awready  (xbar_s_awready),
+      |    .s_axi_wdata    ({chip_mem_wdata,   dma_wdata}),
+      |    .s_axi_wstrb    ({chip_mem_wstrb,   dma_wstrb}),
+      |    .s_axi_wlast    ({chip_mem_wlast,   dma_wlast}),
+      |    .s_axi_wvalid   ({chip_mem_wvalid,  dma_wvalid}),
+      |    .s_axi_wready   (xbar_s_wready),
+      |    .s_axi_bid      (xbar_s_bid),
+      |    .s_axi_bresp    (xbar_s_bresp),
+      |    .s_axi_bvalid   (xbar_s_bvalid),
+      |    .s_axi_bready   ({chip_mem_bready,  dma_bready}),
+      |    .s_axi_arid     ({chip_mem_arid,    4'h0}),
+      |    .s_axi_araddr   ({chip_mem_araddr,  dma_araddr[31:0]}),
+      |    .s_axi_arlen    ({chip_mem_arlen,   dma_arlen}),
+      |    .s_axi_arsize   ({chip_mem_arsize,  dma_arsize}),
+      |    .s_axi_arburst  ({chip_mem_arburst, dma_arburst}),
+      |    .s_axi_arlock   ({1'b0,             dma_arlock}),
+      |    .s_axi_arcache  ({4'h0,             dma_arcache}),
+      |    .s_axi_arprot   ({3'h0,             dma_arprot}),
+      |    .s_axi_arqos    ({4'h0,             dma_arqos}),
+      |    .s_axi_arvalid  ({chip_mem_arvalid, dma_arvalid}),
+      |    .s_axi_arready  (xbar_s_arready),
+      |    .s_axi_rid      (xbar_s_rid),
+      |    .s_axi_rdata    (xbar_s_rdata),
+      |    .s_axi_rresp    (xbar_s_rresp),
+      |    .s_axi_rlast    (xbar_s_rlast),
+      |    .s_axi_rvalid   (xbar_s_rvalid),
+      |    .s_axi_rready   ({chip_mem_rready,  dma_rready}),
+      |    // Master port (single)
+      |    .m_axi_awid     (xbar_m_awid),
+      |    .m_axi_awaddr   (xbar_m_awaddr),
+      |    .m_axi_awlen    (xbar_m_awlen),
+      |    .m_axi_awsize   (xbar_m_awsize),
+      |    .m_axi_awburst  (xbar_m_awburst),
+      |    .m_axi_awlock   (xbar_m_awlock),
+      |    .m_axi_awcache  (xbar_m_awcache),
+      |    .m_axi_awprot   (xbar_m_awprot),
+      |    .m_axi_awregion (xbar_m_awregion),
+      |    .m_axi_awqos    (xbar_m_awqos),
+      |    .m_axi_awvalid  (xbar_m_awvalid),
+      |    .m_axi_awready  (xbar_m_awready),
+      |    .m_axi_wdata    (xbar_m_wdata),
+      |    .m_axi_wstrb    (xbar_m_wstrb),
+      |    .m_axi_wlast    (xbar_m_wlast),
+      |    .m_axi_wvalid   (xbar_m_wvalid),
+      |    .m_axi_wready   (xbar_m_wready),
+      |    .m_axi_bid      (xbar_m_bid),
+      |    .m_axi_bresp    (xbar_m_bresp),
+      |    .m_axi_bvalid   (xbar_m_bvalid),
+      |    .m_axi_bready   (xbar_m_bready),
+      |    .m_axi_arid     (xbar_m_arid),
+      |    .m_axi_araddr   (xbar_m_araddr),
+      |    .m_axi_arlen    (xbar_m_arlen),
+      |    .m_axi_arsize   (xbar_m_arsize),
+      |    .m_axi_arburst  (xbar_m_arburst),
+      |    .m_axi_arlock   (xbar_m_arlock),
+      |    .m_axi_arcache  (xbar_m_arcache),
+      |    .m_axi_arprot   (xbar_m_arprot),
+      |    .m_axi_arregion (xbar_m_arregion),
+      |    .m_axi_arqos    (xbar_m_arqos),
+      |    .m_axi_arvalid  (xbar_m_arvalid),
+      |    .m_axi_arready  (xbar_m_arready),
+      |    .m_axi_rid      (xbar_m_rid),
+      |    .m_axi_rdata    (xbar_m_rdata),
+      |    .m_axi_rresp    (xbar_m_rresp),
+      |    .m_axi_rlast    (xbar_m_rlast),
+      |    .m_axi_rvalid   (xbar_m_rvalid),
+      |    .m_axi_rready   (xbar_m_rready)
       |  );
       |
-      |  // ── Clock converters: axi_aclk → ddr4_ui_clk ─────────────────────
-      |  axi_clkconv_h2c clkconv_h2c (
-      |    .s_axi_aclk(axi_aclk), .s_axi_aresetn(axi_aresetn),
-      |    .m_axi_aclk(ddr4_ui_clk), .m_axi_aresetn(ddr4_aresetn),
-      |    .s_axi_awaddr(dh_awaddr), .s_axi_awlen(dh_awlen), .s_axi_awsize(dh_awsize),
-      |    .s_axi_awburst(dh_awburst), .s_axi_awlock(1'b0), .s_axi_awcache(4'h0),
-      |    .s_axi_awprot(3'h0), .s_axi_awqos(4'h0), .s_axi_awregion(4'h0),
-      |    .s_axi_awvalid(dh_awvalid), .s_axi_awready(dh_awready),
-      |    .s_axi_wdata(dh_wdata), .s_axi_wstrb(dh_wstrb),
-      |    .s_axi_wlast(dh_wlast), .s_axi_wvalid(dh_wvalid), .s_axi_wready(dh_wready),
-      |    .s_axi_bresp(dh_bresp), .s_axi_bvalid(dh_bvalid), .s_axi_bready(dh_bready),
-      |    .s_axi_araddr(dh_araddr), .s_axi_arlen(dh_arlen), .s_axi_arsize(dh_arsize),
-      |    .s_axi_arburst(dh_arburst), .s_axi_arlock(1'b0), .s_axi_arcache(4'h0),
-      |    .s_axi_arprot(3'h0), .s_axi_arqos(4'h0), .s_axi_arregion(4'h0),
-      |    .s_axi_arvalid(dh_arvalid), .s_axi_arready(dh_arready),
-      |    .s_axi_rdata(dh_rdata), .s_axi_rresp(dh_rresp),
-      |    .s_axi_rlast(dh_rlast), .s_axi_rvalid(dh_rvalid), .s_axi_rready(dh_rready),
-      |    .m_axi_awaddr(ch_awaddr), .m_axi_awlen(ch_awlen), .m_axi_awsize(ch_awsize),
-      |    .m_axi_awburst(ch_awburst), .m_axi_awlock(), .m_axi_awcache(), .m_axi_awprot(),
-      |    .m_axi_awqos(), .m_axi_awregion(),
-      |    .m_axi_awvalid(ch_awvalid), .m_axi_awready(ch_awready),
-      |    .m_axi_wdata(ch_wdata), .m_axi_wstrb(ch_wstrb),
-      |    .m_axi_wlast(ch_wlast), .m_axi_wvalid(ch_wvalid), .m_axi_wready(ch_wready),
-      |    .m_axi_bresp(ch_bresp), .m_axi_bvalid(ch_bvalid), .m_axi_bready(ch_bready),
-      |    .m_axi_araddr(ch_araddr), .m_axi_arlen(ch_arlen), .m_axi_arsize(ch_arsize),
-      |    .m_axi_arburst(ch_arburst), .m_axi_arlock(), .m_axi_arcache(), .m_axi_arprot(),
-      |    .m_axi_arqos(), .m_axi_arregion(),
-      |    .m_axi_arvalid(ch_arvalid), .m_axi_arready(ch_arready),
-      |    .m_axi_rdata(ch_rdata), .m_axi_rresp(ch_rresp),
-      |    .m_axi_rlast(ch_rlast), .m_axi_rvalid(ch_rvalid), .m_axi_rready(ch_rready)
-      |  );
+      |  // Split crossbar slave responses back to individual ports
+      |  // S0 = DMA, S1 = chip_mem
+      |  assign dma_awready       = xbar_s_awready[0];
+      |  assign chip_mem_awready  = xbar_s_awready[1];
+      |  assign dma_wready        = xbar_s_wready[0];
+      |  assign chip_mem_wready   = xbar_s_wready[1];
+      |  assign dma_bresp         = xbar_s_bresp[1:0];
+      |  assign dma_bvalid        = xbar_s_bvalid[0];
+      |  assign chip_mem_bid      = xbar_s_bid[7:4];
+      |  assign chip_mem_bresp    = xbar_s_bresp[3:2];
+      |  assign chip_mem_bvalid   = xbar_s_bvalid[1];
+      |  assign dma_arready       = xbar_s_arready[0];
+      |  assign chip_mem_arready  = xbar_s_arready[1];
+      |  assign dma_rdata         = xbar_s_rdata[63:0];
+      |  assign dma_rresp         = xbar_s_rresp[1:0];
+      |  assign dma_rlast         = xbar_s_rlast[0];
+      |  assign dma_rvalid        = xbar_s_rvalid[0];
+      |  assign chip_mem_rid      = xbar_s_rid[7:4];
+      |  assign chip_mem_rdata    = xbar_s_rdata[127:64];
+      |  assign chip_mem_rresp    = xbar_s_rresp[3:2];
+      |  assign chip_mem_rlast    = xbar_s_rlast[1];
+      |  assign chip_mem_rvalid   = xbar_s_rvalid[1];
       |
-      |  axi_clkconv_soc clkconv_soc (
-      |    .s_axi_aclk(axi_aclk), .s_axi_aresetn(axi_aresetn),
-      |    .m_axi_aclk(ddr4_ui_clk), .m_axi_aresetn(ddr4_aresetn),
-      |    .s_axi_awaddr(ds_awaddr), .s_axi_awlen(ds_awlen), .s_axi_awsize(ds_awsize),
-      |    .s_axi_awburst(ds_awburst), .s_axi_awlock(1'b0), .s_axi_awcache(4'h0),
-      |    .s_axi_awprot(3'h0), .s_axi_awqos(4'h0), .s_axi_awregion(4'h0),
-      |    .s_axi_awvalid(ds_awvalid), .s_axi_awready(ds_awready),
-      |    .s_axi_wdata(ds_wdata), .s_axi_wstrb(ds_wstrb),
-      |    .s_axi_wlast(ds_wlast), .s_axi_wvalid(ds_wvalid), .s_axi_wready(ds_wready),
-      |    .s_axi_bid(ds_bid), .s_axi_bresp(ds_bresp),
-      |    .s_axi_bvalid(ds_bvalid), .s_axi_bready(ds_bready),
-      |    .s_axi_araddr(ds_araddr), .s_axi_arlen(ds_arlen), .s_axi_arsize(ds_arsize),
-      |    .s_axi_arburst(ds_arburst), .s_axi_arlock(1'b0), .s_axi_arcache(4'h0),
-      |    .s_axi_arprot(3'h0), .s_axi_arqos(4'h0), .s_axi_arregion(4'h0),
-      |    .s_axi_arvalid(ds_arvalid), .s_axi_arready(ds_arready),
-      |    .s_axi_rid(ds_rid), .s_axi_rdata(ds_rdata), .s_axi_rresp(ds_rresp),
-      |    .s_axi_rlast(ds_rlast), .s_axi_rvalid(ds_rvalid), .s_axi_rready(ds_rready),
-      |    .m_axi_awaddr(cs_awaddr), .m_axi_awlen(cs_awlen), .m_axi_awsize(cs_awsize),
-      |    .m_axi_awburst(cs_awburst), .m_axi_awlock(), .m_axi_awcache(), .m_axi_awprot(),
-      |    .m_axi_awqos(), .m_axi_awregion(),
-      |    .m_axi_awvalid(cs_awvalid), .m_axi_awready(cs_awready),
-      |    .m_axi_wdata(cs_wdata), .m_axi_wstrb(cs_wstrb),
-      |    .m_axi_wlast(cs_wlast), .m_axi_wvalid(cs_wvalid), .m_axi_wready(cs_wready),
-      |    .m_axi_bid(cs_bid), .m_axi_bresp(cs_bresp),
-      |    .m_axi_bvalid(cs_bvalid), .m_axi_bready(cs_bready),
-      |    .m_axi_araddr(cs_araddr), .m_axi_arlen(cs_arlen), .m_axi_arsize(cs_arsize),
-      |    .m_axi_arburst(cs_arburst), .m_axi_arlock(), .m_axi_arcache(), .m_axi_arprot(),
-      |    .m_axi_arqos(), .m_axi_arregion(),
-      |    .m_axi_arvalid(cs_arvalid), .m_axi_arready(cs_arready),
-      |    .m_axi_rid(cs_rid), .m_axi_rdata(cs_rdata), .m_axi_rresp(cs_rresp),
-      |    .m_axi_rlast(cs_rlast), .m_axi_rvalid(cs_rvalid), .m_axi_rready(cs_rready)
-      |  );
+      |  // ── dwidth_soc: 64→512, axi_aclk → ui_clk (ACLK_ASYNC=1) ────────
+      |  wire [33:0]  ddr_awaddr;  wire [7:0] ddr_awlen;  wire [2:0] ddr_awsize;
+      |  wire [1:0]   ddr_awburst; wire       ddr_awvalid, ddr_awready;
+      |  wire [511:0] ddr_wdata;   wire [63:0] ddr_wstrb;
+      |  wire         ddr_wlast,   ddr_wvalid, ddr_wready;
+      |  wire [1:0]   ddr_bresp;   wire       ddr_bvalid, ddr_bready;
+      |  wire [33:0]  ddr_araddr;  wire [7:0] ddr_arlen;  wire [2:0] ddr_arsize;
+      |  wire [1:0]   ddr_arburst; wire       ddr_arvalid, ddr_arready;
+      |  wire [511:0] ddr_rdata;   wire [1:0] ddr_rresp;
+      |  wire         ddr_rlast,   ddr_rvalid, ddr_rready;
       |
-      |  // ── AXI Crossbar 2→1 (ui_clk domain) ────────────────────────────
-      |  // axi_crossbar v2.1: vector ports, NUM_SI=2, NUM_MI=1, 512-bit/34-bit
-      |  // s_axi_*: [2*W-1:0] vectors, [1] = SoC (S01), [0] = H2C (S00)
-      |  // m_axi_*: scalar (1 master)
-      |  axi_ic_ddr4 axi_ic (
-      |    .aclk(ddr4_ui_clk), .aresetn(ddr4_aresetn),
-      |    .s_axi_awid    ({4'h0,       4'h0}),
-      |    .s_axi_awaddr  ({cs_awaddr,  ch_awaddr}),
-      |    .s_axi_awlen   ({cs_awlen,   ch_awlen}),
-      |    .s_axi_awsize  ({cs_awsize,  ch_awsize}),
-      |    .s_axi_awburst ({cs_awburst, ch_awburst}),
-      |    .s_axi_awlock  (2'b0),
-      |    .s_axi_awcache (8'h0),
-      |    .s_axi_awprot  (6'h0),
-      |    .s_axi_awqos   (8'h0),
-      |    .s_axi_awvalid ({cs_awvalid, ch_awvalid}),
-      |    .s_axi_awready ({cs_awready, ch_awready}),
-      |    .s_axi_wdata   ({cs_wdata,   ch_wdata}),
-      |    .s_axi_wstrb   ({cs_wstrb,   ch_wstrb}),
-      |    .s_axi_wlast   ({cs_wlast,   ch_wlast}),
-      |    .s_axi_wvalid  ({cs_wvalid,  ch_wvalid}),
-      |    .s_axi_wready  ({cs_wready,  ch_wready}),
-      |    .s_axi_bid     (),
-      |    .s_axi_bresp   ({cs_bresp,   ch_bresp}),
-      |    .s_axi_bvalid  ({cs_bvalid,  ch_bvalid}),
-      |    .s_axi_bready  ({cs_bready,  ch_bready}),
-      |    .s_axi_arid    (8'h0),
-      |    .s_axi_araddr  ({cs_araddr,  ch_araddr}),
-      |    .s_axi_arlen   ({cs_arlen,   ch_arlen}),
-      |    .s_axi_arsize  ({cs_arsize,  ch_arsize}),
-      |    .s_axi_arburst ({cs_arburst, ch_arburst}),
-      |    .s_axi_arlock  (2'b0),
-      |    .s_axi_arcache (8'h0),
-      |    .s_axi_arprot  (6'h0),
-      |    .s_axi_arqos   (8'h0),
-      |    .s_axi_arvalid ({cs_arvalid, ch_arvalid}),
-      |    .s_axi_arready ({cs_arready, ch_arready}),
+      |  axi_dwidth dwidth_soc (
+      |    .s_axi_aclk    (axi_aclk),
+      |    .s_axi_aresetn (axi_aresetn),
+      |    .s_axi_awid    (xbar_m_awid),
+      |    .s_axi_awaddr  ({2'b0, xbar_m_awaddr}),
+      |    .s_axi_awlen   (xbar_m_awlen),
+      |    .s_axi_awsize  (xbar_m_awsize),
+      |    .s_axi_awburst (xbar_m_awburst),
+      |    .s_axi_awlock  (xbar_m_awlock),
+      |    .s_axi_awcache (xbar_m_awcache),
+      |    .s_axi_awprot  (xbar_m_awprot),
+      |    .s_axi_awregion(xbar_m_awregion),
+      |    .s_axi_awqos   (xbar_m_awqos),
+      |    .s_axi_awvalid (xbar_m_awvalid),
+      |    .s_axi_awready (xbar_m_awready),
+      |    .s_axi_wdata   (xbar_m_wdata),
+      |    .s_axi_wstrb   (xbar_m_wstrb),
+      |    .s_axi_wlast   (xbar_m_wlast),
+      |    .s_axi_wvalid  (xbar_m_wvalid),
+      |    .s_axi_wready  (xbar_m_wready),
+      |    .s_axi_bid     (xbar_m_bid),
+      |    .s_axi_bresp   (xbar_m_bresp),
+      |    .s_axi_bvalid  (xbar_m_bvalid),
+      |    .s_axi_bready  (xbar_m_bready),
+      |    .s_axi_arid    (xbar_m_arid),
+      |    .s_axi_araddr  ({2'b0, xbar_m_araddr}),
+      |    .s_axi_arlen   (xbar_m_arlen),
+      |    .s_axi_arsize  (xbar_m_arsize),
+      |    .s_axi_arburst (xbar_m_arburst),
+      |    .s_axi_arlock  (xbar_m_arlock),
+      |    .s_axi_arcache (xbar_m_arcache),
+      |    .s_axi_arprot  (xbar_m_arprot),
+      |    .s_axi_arregion(xbar_m_arregion),
+      |    .s_axi_arqos   (xbar_m_arqos),
+      |    .s_axi_arvalid (xbar_m_arvalid),
+      |    .s_axi_arready (xbar_m_arready),
       |    .s_axi_rid     (),
-      |    .s_axi_rdata   ({cs_rdata,   ch_rdata}),
-      |    .s_axi_rresp   ({cs_rresp,   ch_rresp}),
-      |    .s_axi_rlast   ({cs_rlast,   ch_rlast}),
-      |    .s_axi_rvalid  ({cs_rvalid,  ch_rvalid}),
-      |    .s_axi_rready  ({cs_rready,  ch_rready}),
-      |    .m_axi_awid    (),
-      |    .m_axi_awaddr  (ic_awaddr),
-      |    .m_axi_awlen   (ic_awlen),
-      |    .m_axi_awsize  (ic_awsize),
-      |    .m_axi_awburst (ic_awburst),
-      |    .m_axi_awlock  (), .m_axi_awcache(), .m_axi_awprot(), .m_axi_awqos(),
-      |    .m_axi_awvalid (ic_awvalid), .m_axi_awready(ic_awready),
-      |    .m_axi_wdata   (ic_wdata),  .m_axi_wstrb(ic_wstrb),
-      |    .m_axi_wlast   (ic_wlast),  .m_axi_wvalid(ic_wvalid), .m_axi_wready(ic_wready),
-      |    .m_axi_bid     (4'h0),
-      |    .m_axi_bresp   (ic_bresp),  .m_axi_bvalid(ic_bvalid), .m_axi_bready(ic_bready),
-      |    .m_axi_arid    (),
-      |    .m_axi_araddr  (ic_araddr), .m_axi_arlen(ic_arlen),
-      |    .m_axi_arsize  (ic_arsize), .m_axi_arburst(ic_arburst),
-      |    .m_axi_arlock  (), .m_axi_arcache(), .m_axi_arprot(), .m_axi_arqos(),
-      |    .m_axi_arvalid (ic_arvalid), .m_axi_arready(ic_arready),
-      |    .m_axi_rid     (4'h0),
-      |    .m_axi_rdata   (ic_rdata),  .m_axi_rresp(ic_rresp),
-      |    .m_axi_rlast   (ic_rlast),  .m_axi_rvalid(ic_rvalid), .m_axi_rready(ic_rready)
+      |    .s_axi_rdata   (xbar_m_rdata),
+      |    .s_axi_rresp   (xbar_m_rresp),
+      |    .s_axi_rlast   (xbar_m_rlast),
+      |    .s_axi_rvalid  (xbar_m_rvalid),
+      |    .s_axi_rready  (xbar_m_rready),
+      |    .m_axi_aclk    (ui_clk),
+      |    .m_axi_aresetn (ui_aresetn),
+      |    .m_axi_awaddr  (ddr_awaddr), .m_axi_awlen(ddr_awlen),
+      |    .m_axi_awsize  (ddr_awsize), .m_axi_awburst(ddr_awburst),
+      |    .m_axi_awlock  (), .m_axi_awcache(), .m_axi_awprot(),
+      |    .m_axi_awregion(), .m_axi_awqos(),
+      |    .m_axi_awvalid (ddr_awvalid), .m_axi_awready(ddr_awready),
+      |    .m_axi_wdata   (ddr_wdata),   .m_axi_wstrb (ddr_wstrb),
+      |    .m_axi_wlast   (ddr_wlast),   .m_axi_wvalid(ddr_wvalid),
+      |    .m_axi_wready  (ddr_wready),
+      |    .m_axi_bresp   (ddr_bresp),   .m_axi_bvalid(ddr_bvalid),
+      |    .m_axi_bready  (ddr_bready),
+      |    .m_axi_araddr  (ddr_araddr), .m_axi_arlen(ddr_arlen),
+      |    .m_axi_arsize  (ddr_arsize), .m_axi_arburst(ddr_arburst),
+      |    .m_axi_arlock  (), .m_axi_arcache(), .m_axi_arprot(),
+      |    .m_axi_arregion(), .m_axi_arqos(),
+      |    .m_axi_arvalid (ddr_arvalid), .m_axi_arready(ddr_arready),
+      |    .m_axi_rdata   (ddr_rdata),   .m_axi_rresp (ddr_rresp),
+      |    .m_axi_rlast   (ddr_rlast),   .m_axi_rvalid(ddr_rvalid),
+      |    .m_axi_rready  (ddr_rready)
       |  );
       |
-      |  // ── DDR4 ─────────────────────────────────────────────────────────
+      |  // ── DDR4 MIG ──────────────────────────────────────────────────────
       |  ddr4_0 ddr4 (
-      |    .sys_rst(~pcie_sys_rst_n),
-      |    .c0_sys_clk_p(c0_sys_clk_p),
-      |    .c0_sys_clk_n(c0_sys_clk_n),
-      |    .c0_ddr4_act_n(c0_ddr4_act_n),
-      |    .c0_ddr4_adr(c0_ddr4_adr),
-      |    .c0_ddr4_ba(c0_ddr4_ba),
-      |    .c0_ddr4_bg(c0_ddr4_bg),
-      |    .c0_ddr4_cke(c0_ddr4_cke),
-      |    .c0_ddr4_odt(c0_ddr4_odt),
-      |    .c0_ddr4_cs_n(c0_ddr4_cs_n),
-      |    .c0_ddr4_ck_t(c0_ddr4_ck_t),
-      |    .c0_ddr4_ck_c(c0_ddr4_ck_c),
-      |    .c0_ddr4_reset_n(c0_ddr4_reset_n),
-      |    .c0_ddr4_parity(c0_ddr4_parity),
-      |    .c0_ddr4_dq(c0_ddr4_dq),
-      |    .c0_ddr4_dqs_c(c0_ddr4_dqs_c),
-      |    .c0_ddr4_dqs_t(c0_ddr4_dqs_t),
-      |    .c0_ddr4_ui_clk(ddr4_ui_clk),
-      |    .c0_ddr4_ui_clk_sync_rst(ddr4_ui_clk_sync_rst),
-      |    .c0_ddr4_aresetn(ddr4_aresetn),
-      |    // AXI control slave (unused, tie-off)
+      |    .sys_rst                   (ddr4_sys_rst),
+      |    .c0_sys_clk_p              (c0_sys_clk_p),
+      |    .c0_sys_clk_n              (c0_sys_clk_n),
+      |    .c0_ddr4_act_n             (c0_ddr4_act_n),
+      |    .c0_ddr4_adr               (c0_ddr4_adr),
+      |    .c0_ddr4_ba                (c0_ddr4_ba),
+      |    .c0_ddr4_bg                (c0_ddr4_bg),
+      |    .c0_ddr4_cke               (c0_ddr4_cke),
+      |    .c0_ddr4_odt               (c0_ddr4_odt),
+      |    .c0_ddr4_cs_n              (c0_ddr4_cs_n),
+      |    .c0_ddr4_ck_t              (c0_ddr4_ck_t),
+      |    .c0_ddr4_ck_c              (c0_ddr4_ck_c),
+      |    .c0_ddr4_reset_n           (c0_ddr4_reset_n),
+      |    .c0_ddr4_parity            (c0_ddr4_parity),
+      |    .c0_ddr4_dq                (c0_ddr4_dq),
+      |    .c0_ddr4_dqs_c             (c0_ddr4_dqs_c),
+      |    .c0_ddr4_dqs_t             (c0_ddr4_dqs_t),
+      |    .c0_ddr4_ui_clk            (ui_clk),
+      |    .c0_ddr4_ui_clk_sync_rst   (ui_clk_sync_rst),
+      |    .c0_ddr4_aresetn           (ui_aresetn),
       |    .c0_ddr4_s_axi_ctrl_awvalid(1'b0),
-      |    .c0_ddr4_s_axi_ctrl_awaddr(32'h0),
-      |    .c0_ddr4_s_axi_ctrl_wvalid(1'b0),
-      |    .c0_ddr4_s_axi_ctrl_wdata(32'h0),
-      |    .c0_ddr4_s_axi_ctrl_bready(1'b1),
+      |    .c0_ddr4_s_axi_ctrl_awaddr (32'h0),
+      |    .c0_ddr4_s_axi_ctrl_wvalid (1'b0),
+      |    .c0_ddr4_s_axi_ctrl_wdata  (32'h0),
+      |    .c0_ddr4_s_axi_ctrl_bready (1'b1),
       |    .c0_ddr4_s_axi_ctrl_arvalid(1'b0),
-      |    .c0_ddr4_s_axi_ctrl_araddr(32'h0),
-      |    .c0_ddr4_s_axi_ctrl_rready(1'b1),
-      |    .c0_ddr4_interrupt(),
-      |    // AXI slave
-      |    .c0_ddr4_s_axi_awid(4'h0),
-      |    .c0_ddr4_s_axi_awaddr(ic_awaddr),
-      |    .c0_ddr4_s_axi_awlen(ic_awlen),
-      |    .c0_ddr4_s_axi_awsize(ic_awsize),
-      |    .c0_ddr4_s_axi_awburst(ic_awburst),
-      |    .c0_ddr4_s_axi_awlock(1'b0),
-      |    .c0_ddr4_s_axi_awcache(4'h0),
-      |    .c0_ddr4_s_axi_awprot(3'h0),
-      |    .c0_ddr4_s_axi_awqos(4'h0),
-      |    .c0_ddr4_s_axi_awvalid(ic_awvalid),
-      |    .c0_ddr4_s_axi_awready(ic_awready),
-      |    .c0_ddr4_s_axi_wdata(ic_wdata),
-      |    .c0_ddr4_s_axi_wstrb(ic_wstrb),
-      |    .c0_ddr4_s_axi_wlast(ic_wlast),
-      |    .c0_ddr4_s_axi_wvalid(ic_wvalid),
-      |    .c0_ddr4_s_axi_wready(ic_wready),
-      |    .c0_ddr4_s_axi_bid(),
-      |    .c0_ddr4_s_axi_bresp(ic_bresp),
-      |    .c0_ddr4_s_axi_bvalid(ic_bvalid),
-      |    .c0_ddr4_s_axi_bready(ic_bready),
-      |    .c0_ddr4_s_axi_arid(4'h0),
-      |    .c0_ddr4_s_axi_araddr(ic_araddr),
-      |    .c0_ddr4_s_axi_arlen(ic_arlen),
-      |    .c0_ddr4_s_axi_arsize(ic_arsize),
-      |    .c0_ddr4_s_axi_arburst(ic_arburst),
-      |    .c0_ddr4_s_axi_arlock(1'b0),
-      |    .c0_ddr4_s_axi_arcache(4'h0),
-      |    .c0_ddr4_s_axi_arprot(3'h0),
-      |    .c0_ddr4_s_axi_arqos(4'h0),
-      |    .c0_ddr4_s_axi_arvalid(ic_arvalid),
-      |    .c0_ddr4_s_axi_arready(ic_arready),
-      |    .c0_ddr4_s_axi_rid(),
-      |    .c0_ddr4_s_axi_rdata(ic_rdata),
-      |    .c0_ddr4_s_axi_rresp(ic_rresp),
-      |    .c0_ddr4_s_axi_rlast(ic_rlast),
-      |    .c0_ddr4_s_axi_rvalid(ic_rvalid),
-      |    .c0_ddr4_s_axi_rready(ic_rready),
-      |    .c0_init_calib_complete(),
-      |    .dbg_clk(),
-      |    .dbg_bus()
+      |    .c0_ddr4_s_axi_ctrl_araddr (32'h0),
+      |    .c0_ddr4_s_axi_ctrl_rready (1'b1),
+      |    .c0_ddr4_interrupt         (),
+      |    .c0_ddr4_s_axi_awid        (4'h0),
+      |    .c0_ddr4_s_axi_awaddr      (ddr_awaddr),
+      |    .c0_ddr4_s_axi_awlen       (ddr_awlen),
+      |    .c0_ddr4_s_axi_awsize      (ddr_awsize),
+      |    .c0_ddr4_s_axi_awburst     (ddr_awburst),
+      |    .c0_ddr4_s_axi_awlock      (1'b0),
+      |    .c0_ddr4_s_axi_awcache     (4'h0),
+      |    .c0_ddr4_s_axi_awprot      (3'h0),
+      |    .c0_ddr4_s_axi_awqos       (4'h0),
+      |    .c0_ddr4_s_axi_awvalid     (ddr_awvalid),
+      |    .c0_ddr4_s_axi_awready     (ddr_awready),
+      |    .c0_ddr4_s_axi_wdata       (ddr_wdata),
+      |    .c0_ddr4_s_axi_wstrb       (ddr_wstrb),
+      |    .c0_ddr4_s_axi_wlast       (ddr_wlast),
+      |    .c0_ddr4_s_axi_wvalid      (ddr_wvalid),
+      |    .c0_ddr4_s_axi_wready      (ddr_wready),
+      |    .c0_ddr4_s_axi_bid         (),
+      |    .c0_ddr4_s_axi_bresp       (ddr_bresp),
+      |    .c0_ddr4_s_axi_bvalid      (ddr_bvalid),
+      |    .c0_ddr4_s_axi_bready      (ddr_bready),
+      |    .c0_ddr4_s_axi_arid        (4'h0),
+      |    .c0_ddr4_s_axi_araddr      (ddr_araddr),
+      |    .c0_ddr4_s_axi_arlen       (ddr_arlen),
+      |    .c0_ddr4_s_axi_arsize      (ddr_arsize),
+      |    .c0_ddr4_s_axi_arburst     (ddr_arburst),
+      |    .c0_ddr4_s_axi_arlock      (1'b0),
+      |    .c0_ddr4_s_axi_arcache     (4'h0),
+      |    .c0_ddr4_s_axi_arprot      (3'h0),
+      |    .c0_ddr4_s_axi_arqos       (4'h0),
+      |    .c0_ddr4_s_axi_arvalid     (ddr_arvalid),
+      |    .c0_ddr4_s_axi_arready     (ddr_arready),
+      |    .c0_ddr4_s_axi_rid         (),
+      |    .c0_ddr4_s_axi_rdata       (ddr_rdata),
+      |    .c0_ddr4_s_axi_rresp       (ddr_rresp),
+      |    .c0_ddr4_s_axi_rlast       (ddr_rlast),
+      |    .c0_ddr4_s_axi_rvalid      (ddr_rvalid),
+      |    .c0_ddr4_s_axi_rready      (ddr_rready)
       |  );
       |
       |endmodule
-      |""".stripMargin)
+      |""".stripMargin
+  )
 }
