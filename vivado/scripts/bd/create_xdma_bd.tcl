@@ -1,6 +1,7 @@
 # XDMA Block Design — simplified for unified axi_aclk domain.
 # XDMA M_AXI (512b) → dwidth (512→64) → dma_axi (64b, axi_aclk).
 # No clock converter, no clk_wiz — everything stays on axi_aclk.
+# PCIe refclk is differential, buffered by util_ds_buf (IBUFDSGTE).
 if {![info exists proj_dir]} {
   error "proj_dir must be set before sourcing create_xdma_bd.tcl"
 }
@@ -32,9 +33,17 @@ set_property -dict [list \
   CONFIG.ACLK_ASYNC    {0} \
 ] [get_bd_cells dwidth_h2c]
 
+# ── PCIe refclk buffer (differential → single-ended for XDMA) ───────────────
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf:2.2 util_ds_buf_0
+set_property -dict [list \
+  CONFIG.C_BUF_TYPE {IBUFDSGTE} \
+  CONFIG.DIFF_CLK_IN_BOARD_INTERFACE {pcie_refclk} \
+  CONFIG.USE_BOARD_FLOW {true} \
+] [get_bd_cells util_ds_buf_0]
+
 # ── External ports ───────────────────────────────────────────────────────────
-create_bd_port -dir I -type clk pcie_sys_clk
-create_bd_port -dir I -type clk pcie_sys_clk_gt
+create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 pcie_refclk
+set_property -dict [list CONFIG.FREQ_HZ {100000000}] [get_bd_intf_ports pcie_refclk]
 create_bd_port -dir I -type rst pcie_sys_rst_n
 create_bd_port -dir O -type clk axi_aclk
 create_bd_port -dir O -type rst axi_aresetn
@@ -50,8 +59,9 @@ set_property -dict [list \
 connect_bd_net [get_bd_pins irq_const/dout] [get_bd_pins xdma_0/usr_irq_req]
 
 # ── Clock/reset wiring ───────────────────────────────────────────────────────
-connect_bd_net [get_bd_ports pcie_sys_clk] [get_bd_pins xdma_0/sys_clk]
-connect_bd_net [get_bd_ports pcie_sys_clk_gt] [get_bd_pins xdma_0/sys_clk_gt]
+connect_bd_intf_net [get_bd_intf_ports pcie_refclk] [get_bd_intf_pins util_ds_buf_0/CLK_IN_D]
+connect_bd_net [get_bd_pins util_ds_buf_0/IBUF_DS_ODIV2] [get_bd_pins xdma_0/sys_clk]
+connect_bd_net [get_bd_pins util_ds_buf_0/IBUF_OUT]      [get_bd_pins xdma_0/sys_clk_gt]
 connect_bd_net [get_bd_ports pcie_sys_rst_n] [get_bd_pins xdma_0/sys_rst_n]
 connect_bd_net [get_bd_ports axi_aclk] [get_bd_pins xdma_0/axi_aclk]
 connect_bd_net [get_bd_ports axi_aresetn] [get_bd_pins xdma_0/axi_aresetn]
@@ -75,8 +85,6 @@ make_bd_intf_pins_external [get_bd_intf_pins xdma_0/pcie_mgt]
 set_property name pcie_mgt [get_bd_intf_ports pcie_mgt_0]
 
 # ── Clock frequency annotations ─────────────────────────────────────────────
-set_property CONFIG.FREQ_HZ 100000000 [get_bd_ports pcie_sys_clk]
-set_property CONFIG.FREQ_HZ 100000000 [get_bd_ports pcie_sys_clk_gt]
 set_property CONFIG.FREQ_HZ 250000000 [get_bd_ports axi_aclk]
 set_property CONFIG.ASSOCIATED_RESET {axi_aresetn} [get_bd_ports axi_aclk]
 set_property CONFIG.ASSOCIATED_BUSIF {dma_axi:dma_axil} [get_bd_ports axi_aclk]
